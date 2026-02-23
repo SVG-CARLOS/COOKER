@@ -1,0 +1,3184 @@
+#!/usr/bin/env python3
+"""
+╔═══════════════════════════════════════════════════════════════╗
+║                    🔥 C O O K E R 🔥                        ║
+║           The Ultimate Termux Multi-Tool Suite                ║
+║                   40+ Features Packed                         ║
+║                                                               ║
+║  Author: COOKER Dev | License: MIT | Version: 2.0            ║
+╚═══════════════════════════════════════════════════════════════╝
+"""
+
+import os
+import sys
+import json
+import time
+import hashlib
+import base64
+import random
+import string
+import socket
+import struct
+import re
+import shutil
+import subprocess
+import threading
+import datetime
+import math
+import urllib.request
+import urllib.parse
+import sqlite3
+import csv
+import zipfile
+import tarfile
+import textwrap
+import hmac
+import secrets
+import ipaddress
+import uuid
+from pathlib import Path
+from collections import Counter
+
+# ══════════════════════════════════════════════════════════════
+# CONFIGURATION & GLOBALS
+# ══════════════════════════════════════════════════════════════
+
+VERSION = "2.0.0"
+COOKER_DIR = os.path.expanduser("~/.cooker")
+COOKER_DB = os.path.join(COOKER_DIR, "cooker.db")
+COOKER_LOG = os.path.join(COOKER_DIR, "cooker.log")
+COOKER_NOTES = os.path.join(COOKER_DIR, "notes.json")
+COOKER_VAULT = os.path.join(COOKER_DIR, "vault.enc")
+COOKER_CLIPS = os.path.join(COOKER_DIR, "clipboard_history.json")
+COOKER_TASKS = os.path.join(COOKER_DIR, "tasks.json")
+COOKER_CONTACTS = os.path.join(COOKER_DIR, "contacts.json")
+COOKER_SNIPPETS = os.path.join(COOKER_DIR, "snippets.json")
+COOKER_BOOKMARKS = os.path.join(COOKER_DIR, "bookmarks.json")
+
+COLORS = {
+    'R': '\033[91m', 'G': '\033[92m', 'Y': '\033[93m',
+    'B': '\033[94m', 'M': '\033[95m', 'C': '\033[96m',
+    'W': '\033[97m', 'BOLD': '\033[1m', 'DIM': '\033[2m',
+    'UNDER': '\033[4m', 'BLINK': '\033[5m', 'RESET': '\033[0m',
+    'BG_R': '\033[41m', 'BG_G': '\033[42m', 'BG_B': '\033[44m',
+    'BG_Y': '\033[43m', 'BG_M': '\033[45m', 'BG_C': '\033[46m',
+    'ORANGE': '\033[38;5;208m', 'PINK': '\033[38;5;205m',
+    'LIME': '\033[38;5;118m', 'TEAL': '\033[38;5;30m',
+    'GRAY': '\033[90m',
+}
+
+
+def c(color, text):
+    return "{}{}{}".format(COLORS.get(color, ''), text, COLORS['RESET'])
+
+
+def init_cooker():
+    os.makedirs(COOKER_DIR, exist_ok=True)
+    for f in [COOKER_NOTES, COOKER_CLIPS, COOKER_TASKS, COOKER_CONTACTS, COOKER_SNIPPETS, COOKER_BOOKMARKS]:
+        if not os.path.exists(f):
+            with open(f, 'w') as fh:
+                json.dump([], fh)
+    init_db()
+
+
+def init_db():
+    conn = sqlite3.connect(COOKER_DB)
+    cur = conn.cursor()
+    cur.execute('''CREATE TABLE IF NOT EXISTS command_history
+                   (id INTEGER PRIMARY KEY, command TEXT, timestamp TEXT, category TEXT)''')
+    cur.execute('''CREATE TABLE IF NOT EXISTS passwords
+                   (id INTEGER PRIMARY KEY, service TEXT, username TEXT, password_hash TEXT, created TEXT)''')
+    cur.execute('''CREATE TABLE IF NOT EXISTS file_index
+                   (id INTEGER PRIMARY KEY, filepath TEXT, size INTEGER, modified TEXT, checksum TEXT)''')
+    cur.execute('''CREATE TABLE IF NOT EXISTS analytics
+                   (id INTEGER PRIMARY KEY, feature TEXT, uses INTEGER DEFAULT 0, last_used TEXT)''')
+    conn.commit()
+    conn.close()
+
+
+def log_action(action):
+    with open(COOKER_LOG, 'a') as f:
+        f.write("[{}] {}\n".format(datetime.datetime.now().isoformat(), action))
+
+
+def track_feature(feature_name):
+    conn = sqlite3.connect(COOKER_DB)
+    cur = conn.cursor()
+    cur.execute("SELECT uses FROM analytics WHERE feature=?", (feature_name,))
+    row = cur.fetchone()
+    now = datetime.datetime.now().isoformat()
+    if row:
+        cur.execute("UPDATE analytics SET uses=uses+1, last_used=? WHERE feature=?", (now, feature_name))
+    else:
+        cur.execute("INSERT INTO analytics (feature, uses, last_used) VALUES (?,1,?)", (feature_name, now))
+    conn.commit()
+    conn.close()
+
+
+def clear():
+    os.system('clear')
+
+
+def pause():
+    input(c('DIM', '\n  Press Enter to continue...'))
+
+
+def run_cmd(cmd):
+    try:
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+        return result.stdout.strip(), result.stderr.strip(), result.returncode
+    except subprocess.TimeoutExpired:
+        return "", "Command timed out", 1
+    except Exception as e:
+        return "", str(e), 1
+
+
+def load_json(path):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def save_json(path, data):
+    with open(path, 'w') as f:
+        json.dump(data, f, indent=2)
+
+
+def format_size(size):
+    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+        if size < 1024:
+            return "{:.1f}{}".format(size, unit)
+        size /= 1024
+    return "{:.1f}PB".format(size)
+
+
+# ══════════════════════════════════════════════════════════════
+# BANNER & UI
+# ══════════════════════════════════════════════════════════════
+
+def banner():
+    clear()
+    fire_colors = ['R', 'ORANGE', 'Y', 'LIME', 'G']
+    banner_art = r"""
+   ██████╗ ██████╗  ██████╗ ██╗  ██╗███████╗██████╗
+  ██╔════╝██╔═══██╗██╔═══██╗██║ ██╔╝██╔════╝██╔══██╗
+  ██║     ██║   ██║██║   ██║█████╔╝ █████╗  ██████╔╝
+  ██║     ██║   ██║██║   ██║██╔═██╗ ██╔══╝  ██╔══██╗
+  ╚██████╗╚██████╔╝╚██████╔╝██║  ██╗███████╗██║  ██║
+   ╚═════╝ ╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝
+    """
+    lines = banner_art.split('\n')
+    for i, line in enumerate(lines):
+        color = fire_colors[i % len(fire_colors)]
+        print(c(color, line))
+
+    sep = '=' * 52
+    print(c('BOLD', c('C', "  " + sep)))
+    print(c('W', "   🔥 v{} | 40+ Features | Termux Multi-Tool 🔥".format(VERSION)))
+    print(c('BOLD', c('C', "  " + sep)))
+    print()
+
+
+def print_menu_header(title, emoji="🔧"):
+    border = '-' * 50
+    print(c('BOLD', c('M', "\n  +" + border + "+")))
+    padded = " {} {:^46} ".format(emoji, title)
+    print(c('BOLD', c('M', "  |" + padded + "|")))
+    print(c('BOLD', c('M', "  +" + border + "+")))
+
+
+def print_option(num, text, emoji="▸"):
+    num_str = "[{:>2}]".format(num)
+    print("   {} {} {}".format(c('C', num_str), c('Y', emoji), c('W', text)))
+
+
+def get_input(prompt="  🔥 COOKER"):
+    try:
+        return input("\n  {} {} ".format(c('ORANGE', prompt), c('R', '>>'))).strip()
+    except (KeyboardInterrupt, EOFError):
+        print()
+        return ""
+
+
+# ══════════════════════════════════════════════════════════════
+# FEATURE 1: SYSTEM INFORMATION DASHBOARD
+# ══════════════════════════════════════════════════════════════
+
+def system_info():
+    track_feature("system_info")
+    print_menu_header("SYSTEM INFORMATION DASHBOARD", "📊")
+
+    info_cmds = {
+        "Device": "getprop ro.product.model 2>/dev/null || uname -m",
+        "Android Ver": "getprop ro.build.version.release 2>/dev/null || echo N/A",
+        "Kernel": "uname -r",
+        "Architecture": "uname -m",
+        "Hostname": "hostname 2>/dev/null || echo termux",
+        "Uptime": "uptime -p 2>/dev/null || uptime",
+        "Shell": "echo $SHELL",
+        "User": "whoami",
+        "Home Dir": "echo $HOME",
+        "Termux Ver": "echo $TERMUX_VERSION 2>/dev/null || echo Unknown",
+        "Python Ver": "python3 --version 2>&1",
+        "Total Storage": "df -h $HOME | tail -1 | awk '{print $2}'",
+        "Used Storage": "df -h $HOME | tail -1 | awk '{print $3}'",
+        "Free Storage": "df -h $HOME | tail -1 | awk '{print $4}'",
+        "CPU Cores": "nproc 2>/dev/null || echo Unknown",
+    }
+
+    print()
+    for label, cmd in info_cmds.items():
+        out, _, _ = run_cmd(cmd)
+        value = out if out else "N/A"
+        print("   {} {} {}".format(c('C', label.rjust(16)), c('DIM', '|'), c('W', value)))
+
+    out, _, _ = run_cmd("free -h 2>/dev/null")
+    if out:
+        print("\n   {}".format(c('Y', '-- Memory --')))
+        for line in out.split('\n'):
+            print("   {}".format(c('W', line)))
+
+    print("\n   {}".format(c('Y', '-- Key Environment Variables --')))
+    for var in ['PATH', 'TERM', 'LANG', 'PREFIX', 'LD_LIBRARY_PATH']:
+        val = os.environ.get(var, 'Not set')
+        if len(val) > 60:
+            val = val[:57] + '...'
+        print("   {} {} {}".format(c('C', var.rjust(20)), c('DIM', '|'), c('W', val)))
+
+    log_action("Viewed system info")
+    pause()
+
+
+# ══════════════════════════════════════════════════════════════
+# FEATURE 2: NETWORK SCANNER & TOOLS
+# ══════════════════════════════════════════════════════════════
+
+def network_tools():
+    track_feature("network_tools")
+    while True:
+        print_menu_header("NETWORK TOOLKIT", "🌐")
+        print_option(1, "Show IP Information")
+        print_option(2, "Port Scanner")
+        print_option(3, "Ping Host")
+        print_option(4, "DNS Lookup")
+        print_option(5, "Subnet Calculator")
+        print_option(6, "HTTP Header Grabber")
+        print_option(7, "WiFi Info")
+        print_option(8, "Traceroute")
+        print_option(0, "Back to Main Menu")
+
+        choice = get_input("NET")
+        if choice == '1':
+            ip_info()
+        elif choice == '2':
+            port_scanner()
+        elif choice == '3':
+            ping_host()
+        elif choice == '4':
+            dns_lookup()
+        elif choice == '5':
+            subnet_calc()
+        elif choice == '6':
+            http_headers()
+        elif choice == '7':
+            wifi_info()
+        elif choice == '8':
+            traceroute()
+        elif choice == '0':
+            break
+
+
+def ip_info():
+    print("\n   {}".format(c('Y', 'Fetching IP info...')))
+    try:
+        response = urllib.request.urlopen("https://ipinfo.io/json", timeout=10)
+        data = json.loads(response.read().decode())
+        for key, val in data.items():
+            if key != 'readme':
+                print("   {} {} {}".format(c('C', key.rjust(12)), c('DIM', '|'), c('W', str(val))))
+    except Exception:
+        out, _, _ = run_cmd("curl -s ifconfig.me")
+        print("   {} {} {}".format(c('C', 'Public IP'), c('DIM', '|'), c('W', out if out else 'Could not fetch')))
+
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+        print("   {} {} {}".format(c('C', '    Local IP'), c('DIM', '|'), c('W', local_ip)))
+    except Exception:
+        print("   {}".format(c('R', 'Could not determine local IP')))
+    pause()
+
+
+def port_scanner():
+    target = get_input("Target IP/Host")
+    if not target:
+        return
+    port_range = get_input("Port range (e.g., 1-1024)")
+    if not port_range:
+        port_range = "1-1024"
+
+    try:
+        start_port, end_port = map(int, port_range.split('-'))
+    except Exception:
+        print(c('R', "   Invalid range"))
+        return
+
+    end_port = min(end_port, 65535)
+    if end_port - start_port > 5000:
+        print(c('Y', "   Scanning {} ports, this may take a while...".format(end_port - start_port)))
+
+    print("\n   {}".format(c('Y', 'Scanning {}:{}...'.format(target, port_range))))
+    open_ports = []
+
+    common_services = {
+        21: 'FTP', 22: 'SSH', 23: 'Telnet', 25: 'SMTP', 53: 'DNS',
+        80: 'HTTP', 110: 'POP3', 143: 'IMAP', 443: 'HTTPS', 445: 'SMB',
+        993: 'IMAPS', 995: 'POP3S', 3306: 'MySQL', 3389: 'RDP',
+        5432: 'PostgreSQL', 5900: 'VNC', 6379: 'Redis', 8080: 'HTTP-Proxy',
+        8443: 'HTTPS-Alt', 27017: 'MongoDB'
+    }
+
+    try:
+        ip = socket.gethostbyname(target)
+    except Exception:
+        print(c('R', "   Cannot resolve {}".format(target)))
+        pause()
+        return
+
+    start_time = time.time()
+    for port in range(start_port, end_port + 1):
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(0.5)
+            result = sock.connect_ex((ip, port))
+            if result == 0:
+                service = common_services.get(port, 'Unknown')
+                open_ports.append((port, service))
+                print("   {} Port {} {} {} {}".format(
+                    c('G', '*'), c('LIME', str(port).rjust(8)),
+                    c('DIM', '|'), c('W', service), c('G', '[OPEN]')))
+            sock.close()
+        except Exception:
+            pass
+
+    elapsed = time.time() - start_time
+    print("\n   {}".format(c('C', 'Scan complete: {} open ports found in {:.1f}s'.format(len(open_ports), elapsed))))
+    log_action("Port scan on {}: {} open ports".format(target, len(open_ports)))
+    pause()
+
+
+def ping_host():
+    host = get_input("Host to ping")
+    if not host:
+        return
+    count = get_input("Count (default 4)")
+    count = count if count.isdigit() else "4"
+    print("\n   {}".format(c('Y', 'Pinging {}...'.format(host))))
+    out, err, _ = run_cmd("ping -c {} {} 2>&1".format(count, host))
+    print("   {}".format(c('W', out if out else err)))
+    pause()
+
+
+def dns_lookup():
+    domain = get_input("Domain")
+    if not domain:
+        return
+    print("\n   {}".format(c('Y', 'DNS lookup for {}...'.format(domain))))
+    record_types = ['A', 'AAAA', 'MX', 'NS', 'TXT', 'CNAME']
+    for rtype in record_types:
+        out, _, _ = run_cmd("dig +short {} {} 2>/dev/null || nslookup {} 2>/dev/null".format(domain, rtype, domain))
+        if out:
+            print("   {} {} {}".format(c('C', rtype.rjust(6)), c('DIM', '|'), c('W', out.replace('\n', ', '))))
+
+    try:
+        ips = socket.getaddrinfo(domain, None)
+        unique_ips = set(addr[4][0] for addr in ips)
+        print("   {} {} {}".format(c('C', 'Resolved'), c('DIM', '|'), c('W', ', '.join(unique_ips))))
+    except Exception:
+        pass
+    pause()
+
+
+def subnet_calc():
+    cidr = get_input("CIDR (e.g., 192.168.1.0/24)")
+    if not cidr:
+        return
+    try:
+        network = ipaddress.ip_network(cidr, strict=False)
+        hosts = list(network.hosts())
+        first_ip = str(hosts[0]) if len(hosts) > 0 else 'N/A'
+        last_ip = str(hosts[-1]) if len(hosts) > 0 else 'N/A'
+        usable = max(network.num_addresses - 2, 0)
+
+        info = [
+            ("Network", str(network.network_address)),
+            ("Broadcast", str(network.broadcast_address)),
+            ("Netmask", str(network.netmask)),
+            ("Wildcard", str(network.hostmask)),
+            ("Total IPs", str(network.num_addresses)),
+            ("Usable IPs", str(usable)),
+            ("First IP", first_ip),
+            ("Last IP", last_ip),
+            ("Is Private", str(network.is_private)),
+        ]
+        print()
+        for label, val in info:
+            print("   {} {} {}".format(c('C', label.rjust(12)), c('DIM', '|'), c('W', val)))
+    except Exception as e:
+        print(c('R', "   Error: {}".format(e)))
+    pause()
+
+
+def http_headers():
+    url = get_input("URL (with http/https)")
+    if not url:
+        return
+    if not url.startswith('http'):
+        url = 'https://' + url
+    try:
+        req = urllib.request.Request(url, method='HEAD')
+        req.add_header('User-Agent', 'COOKER/2.0')
+        response = urllib.request.urlopen(req, timeout=10)
+        print("\n   {}".format(c('G', 'Status: {}'.format(response.status))))
+        for header, value in response.headers.items():
+            print("   {} {} {}".format(c('C', header.rjust(25)), c('DIM', '|'), c('W', value)))
+    except Exception as e:
+        print(c('R', "   Error: {}".format(e)))
+    pause()
+
+
+def wifi_info():
+    print("\n   {}".format(c('Y', 'WiFi / Network Info...')))
+    cmds = [
+        ("Network Interfaces", "ip addr show 2>/dev/null || ifconfig 2>/dev/null"),
+        ("Routing Table", "ip route 2>/dev/null || route 2>/dev/null"),
+        ("DNS Servers", "cat /etc/resolv.conf 2>/dev/null"),
+        ("Active Connections", "ss -tuln 2>/dev/null || netstat -tuln 2>/dev/null"),
+    ]
+    for label, cmd in cmds:
+        out, _, _ = run_cmd(cmd)
+        if out:
+            print("\n   {}".format(c('Y', '-- {} --'.format(label))))
+            for line in out.split('\n')[:15]:
+                print("   {}".format(c('W', line)))
+    pause()
+
+
+def traceroute():
+    host = get_input("Host")
+    if not host:
+        return
+    print("\n   {}".format(c('Y', 'Traceroute to {}...'.format(host))))
+    out, err, _ = run_cmd("traceroute {} 2>&1 || tracepath {} 2>&1".format(host, host))
+    result = out if out else (err if err else 'traceroute not available')
+    print("   {}".format(c('W', result)))
+    pause()
+
+
+# ══════════════════════════════════════════════════════════════
+# FEATURE 3: FILE MANAGER
+# ══════════════════════════════════════════════════════════════
+
+def file_manager():
+    track_feature("file_manager")
+    current_dir = os.getcwd()
+    while True:
+        print_menu_header("FILE MANAGER", "📁")
+        print("   {} {}".format(c('DIM', 'CWD:'), c('C', current_dir)))
+        print_option(1, "List Files (detailed)")
+        print_option(2, "Navigate Directory")
+        print_option(3, "Create File/Directory")
+        print_option(4, "Delete File/Directory")
+        print_option(5, "Copy File")
+        print_option(6, "Move/Rename File")
+        print_option(7, "Search Files")
+        print_option(8, "File Permissions")
+        print_option(9, "Disk Usage Analyzer")
+        print_option(10, "View File Content")
+        print_option(0, "Back")
+
+        choice = get_input("FILE")
+        if choice == '1':
+            list_files_detailed(current_dir)
+        elif choice == '2':
+            new_dir = get_input("Path (or '..' for parent)")
+            if new_dir:
+                target = os.path.abspath(os.path.join(current_dir, new_dir))
+                if os.path.isdir(target):
+                    current_dir = target
+                    os.chdir(current_dir)
+                else:
+                    print(c('R', "   Not a directory"))
+                    pause()
+        elif choice == '3':
+            create_file_or_dir(current_dir)
+        elif choice == '4':
+            delete_file_or_dir(current_dir)
+        elif choice == '5':
+            copy_file()
+        elif choice == '6':
+            move_file()
+        elif choice == '7':
+            search_files(current_dir)
+        elif choice == '8':
+            file_permissions()
+        elif choice == '9':
+            disk_usage(current_dir)
+        elif choice == '10':
+            view_file()
+        elif choice == '0':
+            break
+
+
+def list_files_detailed(path):
+    print("\n   {}".format(c('Y', 'Contents of {}'.format(path))))
+    try:
+        entries = sorted(os.listdir(path))
+        total_size = 0
+        dirs = 0
+        files = 0
+        for entry in entries:
+            full = os.path.join(path, entry)
+            try:
+                stat = os.stat(full)
+                size = stat.st_size
+                modified = datetime.datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M')
+                perms = oct(stat.st_mode)[-3:]
+                if os.path.isdir(full):
+                    icon = "📂"
+                    color = 'C'
+                    dirs += 1
+                elif os.access(full, os.X_OK):
+                    icon = "⚡"
+                    color = 'G'
+                    files += 1
+                else:
+                    ext = os.path.splitext(entry)[1].lower()
+                    icon_map = {
+                        '.py': '🐍', '.sh': '📜', '.txt': '📄', '.json': '📋',
+                        '.jpg': '🖼', '.png': '🖼', '.mp3': '🎵', '.mp4': '🎬',
+                        '.zip': '📦', '.tar': '📦', '.gz': '📦', '.apk': '📱'
+                    }
+                    icon = icon_map.get(ext, '📄')
+                    color = 'W'
+                    files += 1
+                total_size += size
+
+                size_str = format_size(size)
+                print("   {} {} {} {} {}".format(
+                    icon,
+                    c(color, entry.ljust(35)),
+                    c('DIM', size_str.rjust(10)),
+                    c('GRAY', perms),
+                    c('GRAY', modified)
+                ))
+            except Exception:
+                print("   ? {}".format(c('R', entry + " (access denied)")))
+
+        print("\n   {}".format(c('DIM', '{} dirs, {} files, Total: {}'.format(dirs, files, format_size(total_size)))))
+    except PermissionError:
+        print(c('R', "   Permission denied"))
+    pause()
+
+
+def create_file_or_dir(cwd):
+    print("\n   {}".format(c('Y', '1) Create File  2) Create Directory')))
+    ch = get_input("Choice")
+    name = get_input("Name")
+    if not name:
+        return
+    full = os.path.join(cwd, name)
+    try:
+        if ch == '1':
+            Path(full).touch()
+            print(c('G', "   Created file: {}".format(full)))
+        elif ch == '2':
+            os.makedirs(full, exist_ok=True)
+            print(c('G', "   Created directory: {}".format(full)))
+    except Exception as e:
+        print(c('R', "   Error: {}".format(e)))
+    pause()
+
+
+def delete_file_or_dir(cwd):
+    name = get_input("File/Dir to delete")
+    if not name:
+        return
+    full = os.path.join(cwd, name)
+    confirm = get_input("Delete '{}'? (yes/no)".format(name))
+    if confirm.lower() == 'yes':
+        try:
+            if os.path.isdir(full):
+                shutil.rmtree(full)
+            else:
+                os.remove(full)
+            print(c('G', "   Deleted: {}".format(full)))
+        except Exception as e:
+            print(c('R', "   Error: {}".format(e)))
+    pause()
+
+
+def copy_file():
+    src = get_input("Source")
+    dst = get_input("Destination")
+    if src and dst:
+        try:
+            if os.path.isdir(src):
+                shutil.copytree(src, dst)
+            else:
+                shutil.copy2(src, dst)
+            print(c('G', "   Copied successfully"))
+        except Exception as e:
+            print(c('R', "   Error: {}".format(e)))
+    pause()
+
+
+def move_file():
+    src = get_input("Source")
+    dst = get_input("Destination")
+    if src and dst:
+        try:
+            shutil.move(src, dst)
+            print(c('G', "   Moved successfully"))
+        except Exception as e:
+            print(c('R', "   Error: {}".format(e)))
+    pause()
+
+
+def search_files(start_dir):
+    pattern = get_input("Search pattern")
+    if not pattern:
+        return
+    print("\n   {}".format(c('Y', 'Searching for *{}*...'.format(pattern))))
+    found = 0
+    for root, dirs, files in os.walk(start_dir):
+        for f in files:
+            if pattern.lower() in f.lower():
+                full = os.path.join(root, f)
+                try:
+                    size = format_size(os.path.getsize(full))
+                except Exception:
+                    size = '?'
+                print("   📄 {} {}".format(c('W', full), c('DIM', '({})'.format(size))))
+                found += 1
+                if found >= 100:
+                    print(c('Y', "   ... (limited to 100 results)"))
+                    break
+        if found >= 100:
+            break
+    print("\n   {}".format(c('C', 'Found {} matches'.format(found))))
+    pause()
+
+
+def file_permissions():
+    path = get_input("File path")
+    if not path or not os.path.exists(path):
+        print(c('R', "   File not found"))
+        pause()
+        return
+    stat = os.stat(path)
+    print("\n   {} {} {}".format(c('C', '    Perms'), c('DIM', '|'), c('W', oct(stat.st_mode))))
+    print("   {} {} {}".format(c('C', '    Owner'), c('DIM', '|'), c('W', str(stat.st_uid))))
+    print("   {} {} {}".format(c('C', '    Group'), c('DIM', '|'), c('W', str(stat.st_gid))))
+    print("   {} {} {}".format(c('C', '     Size'), c('DIM', '|'), c('W', format_size(stat.st_size))))
+
+    new_perm = get_input("New permission (e.g., 755) or Enter to skip")
+    if new_perm and new_perm.isdigit():
+        try:
+            os.chmod(path, int(new_perm, 8))
+            print(c('G', "   Permissions changed to {}".format(new_perm)))
+        except Exception as e:
+            print(c('R', "   Error: {}".format(e)))
+    pause()
+
+
+def disk_usage(path):
+    print("\n   {}".format(c('Y', 'Disk Usage Analysis...')))
+    items = []
+    try:
+        for entry in os.listdir(path):
+            full = os.path.join(path, entry)
+            try:
+                if os.path.isdir(full):
+                    size = 0
+                    for r, _, fls in os.walk(full):
+                        for f in fls:
+                            try:
+                                size += os.path.getsize(os.path.join(r, f))
+                            except Exception:
+                                pass
+                else:
+                    size = os.path.getsize(full)
+                items.append((entry, size, os.path.isdir(full)))
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    items.sort(key=lambda x: x[1], reverse=True)
+    total = sum(s for _, s, _ in items)
+
+    for name, size, is_dir in items[:25]:
+        pct = (size / total * 100) if total > 0 else 0
+        bar_len = int(pct / 2)
+        bar = '#' * bar_len + '.' * (50 - bar_len)
+        icon = '📂' if is_dir else '📄'
+        print("   {} {} {} {} {}".format(
+            icon,
+            c('W', name.ljust(30)),
+            c('C', format_size(size).rjust(10)),
+            c('DIM', '{:5.1f}%'.format(pct)),
+            c('G', bar)
+        ))
+
+    print("\n   {}".format(c('Y', 'Total: {}'.format(format_size(total)))))
+    pause()
+
+
+def view_file():
+    path = get_input("File path")
+    if not path or not os.path.exists(path):
+        print(c('R', "   File not found"))
+        pause()
+        return
+    try:
+        size = os.path.getsize(path)
+        if size > 1024 * 1024:
+            print(c('Y', "   File is large ({}). Showing first 100 lines.".format(format_size(size))))
+        with open(path, 'r', errors='replace') as f:
+            for i, line in enumerate(f):
+                if i >= 100:
+                    print(c('Y', "   ... (truncated)"))
+                    break
+                print("   {} {}".format(c('DIM', '{:>4} |'.format(i + 1)), c('W', line.rstrip())))
+    except Exception as e:
+        print(c('R', "   Error: {}".format(e)))
+    pause()
+
+
+# ══════════════════════════════════════════════════════════════
+# FEATURE 4: PASSWORD GENERATOR & MANAGER
+# ══════════════════════════════════════════════════════════════
+
+def password_tools():
+    track_feature("password_tools")
+    while True:
+        print_menu_header("PASSWORD VAULT", "🔐")
+        print_option(1, "Generate Password")
+        print_option(2, "Generate Passphrase")
+        print_option(3, "Password Strength Checker")
+        print_option(4, "Save Password")
+        print_option(5, "List Saved Passwords")
+        print_option(6, "Generate Bulk Passwords")
+        print_option(0, "Back")
+
+        choice = get_input("PASS")
+        if choice == '1':
+            gen_password()
+        elif choice == '2':
+            gen_passphrase()
+        elif choice == '3':
+            check_password_strength()
+        elif choice == '4':
+            save_password()
+        elif choice == '5':
+            list_passwords()
+        elif choice == '6':
+            bulk_passwords()
+        elif choice == '0':
+            break
+
+
+def gen_password():
+    length = get_input("Length (default 16)")
+    length = int(length) if length.isdigit() else 16
+    length = max(4, min(length, 128))
+
+    charsets = {
+        'lowercase': string.ascii_lowercase,
+        'uppercase': string.ascii_uppercase,
+        'digits': string.digits,
+        'symbols': '!@#$%^&*()_+-=[]{}|;:,.<>?'
+    }
+
+    use_symbols = get_input("Include symbols? (y/n, default y)")
+    if use_symbols.lower() == 'n':
+        del charsets['symbols']
+
+    all_chars = ''.join(charsets.values())
+
+    password = [secrets.choice(chars) for chars in charsets.values()]
+    password += [secrets.choice(all_chars) for _ in range(length - len(password))]
+    random.shuffle(password)
+    password = ''.join(password)
+
+    entropy = math.log2(len(all_chars) ** length)
+
+    print("\n   {}".format(c('G', '🔑 Generated Password:')))
+    print("\n   {}".format(c('BOLD', c('LIME', password))))
+    print("\n   {}".format(c('C', 'Length: {} | Entropy: {:.1f} bits'.format(length, entropy))))
+
+    if entropy < 40:
+        strength, color = "WEAK", 'R'
+    elif entropy < 60:
+        strength, color = "FAIR", 'Y'
+    elif entropy < 80:
+        strength, color = "STRONG", 'G'
+    else:
+        strength, color = "VERY STRONG", 'LIME'
+    print("   {} {}".format(c('C', 'Strength:'), c(color, strength)))
+    pause()
+
+
+def gen_passphrase():
+    words = [
+        "apple", "brave", "cloud", "dance", "eagle", "flame", "grape", "house",
+        "ivory", "juice", "kneel", "lemon", "maple", "noble", "ocean", "piano",
+        "quest", "river", "storm", "tiger", "unity", "vivid", "water", "xenon",
+        "yacht", "zebra", "amber", "blaze", "coral", "drift", "ember", "frost",
+        "gleam", "haven", "ingot", "jewel", "karma", "lunar", "mirth", "nexus",
+        "orbit", "prism", "quilt", "reign", "solar", "thorn", "ultra", "vigor",
+        "woven", "xylem", "yield", "zonal", "brick", "crane", "delta", "epoch",
+        "forge", "globe", "haste", "irony", "joust", "knack", "lodge", "mango"
+    ]
+
+    count = get_input("Number of words (default 5)")
+    count = int(count) if count.isdigit() else 5
+    sep = get_input("Separator (default '-')")
+    sep = sep if sep else '-'
+
+    selected = [secrets.choice(words) for _ in range(count)]
+    passphrase = sep.join(w.capitalize() if random.random() > 0.5 else w for w in selected)
+    passphrase += sep + str(random.randint(10, 99))
+
+    print("\n   {}".format(c('G', '🔑 Generated Passphrase:')))
+    print("\n   {}".format(c('BOLD', c('LIME', passphrase))))
+    pause()
+
+
+def check_password_strength():
+    pw = get_input("Enter password to check")
+    if not pw:
+        return
+
+    score = 0
+    feedback = []
+
+    if len(pw) >= 8:
+        score += 1
+    else:
+        feedback.append("Too short (min 8)")
+    if len(pw) >= 12:
+        score += 1
+    if len(pw) >= 16:
+        score += 1
+    if re.search(r'[a-z]', pw):
+        score += 1
+    else:
+        feedback.append("Add lowercase")
+    if re.search(r'[A-Z]', pw):
+        score += 1
+    else:
+        feedback.append("Add uppercase")
+    if re.search(r'\d', pw):
+        score += 1
+    else:
+        feedback.append("Add numbers")
+    if re.search(r'[!@#$%^&*()_+\-=\[\]{}|;:,.<>?]', pw):
+        score += 2
+    else:
+        feedback.append("Add symbols")
+    if len(set(pw)) > len(pw) * 0.7:
+        score += 1
+    else:
+        feedback.append("Too many repeated chars")
+
+    common = ['password', '123456', 'qwerty', 'letmein', 'admin', 'welcome']
+    if pw.lower() in common:
+        score = 0
+        feedback.append("Common password detected!")
+
+    if score >= 8:
+        label, color = 'VERY STRONG', 'LIME'
+    elif score >= 7:
+        label, color = 'STRONG', 'G'
+    elif score >= 5:
+        label, color = 'FAIR', 'Y'
+    elif score >= 3:
+        label, color = 'WEAK', 'ORANGE'
+    else:
+        label, color = 'VERY WEAK', 'R'
+
+    bar = '#' * score + '.' * (10 - score)
+    print("\n   {} {} {} {}".format(c('C', 'Score:'), c(color, '{}/10'.format(score)), c(color, bar), c(color, label)))
+    if feedback:
+        print("   {} {}".format(c('Y', 'Tips:'), ', '.join(feedback)))
+    pause()
+
+
+def save_password():
+    service = get_input("Service name")
+    username = get_input("Username")
+    password = get_input("Password")
+    if not all([service, username, password]):
+        return
+
+    hashed = hashlib.sha256(password.encode()).hexdigest()
+    conn = sqlite3.connect(COOKER_DB)
+    cur = conn.cursor()
+    cur.execute("INSERT INTO passwords (service, username, password_hash, created) VALUES (?,?,?,?)",
+                (service, username, hashed, datetime.datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
+    print(c('G', "   Password saved (hashed)!"))
+    log_action("Saved password for {}".format(service))
+    pause()
+
+
+def list_passwords():
+    conn = sqlite3.connect(COOKER_DB)
+    cur = conn.cursor()
+    cur.execute("SELECT service, username, created FROM passwords ORDER BY created DESC")
+    rows = cur.fetchall()
+    conn.close()
+
+    if not rows:
+        print(c('Y', "   No saved passwords"))
+    else:
+        print("\n   {} {} {}".format(
+            c('C', 'Service'.rjust(20)),
+            c('C', 'Username'.rjust(20)),
+            c('C', 'Created'.rjust(20))
+        ))
+        print("   {}".format(c('DIM', '-' * 62)))
+        for service, username, created in rows:
+            created_short = created[:10] if created else 'N/A'
+            print("   {} {} {}".format(
+                c('W', service.rjust(20)),
+                c('G', username.rjust(20)),
+                c('DIM', created_short.rjust(20))
+            ))
+    pause()
+
+
+def bulk_passwords():
+    count = get_input("How many? (max 50)")
+    count = min(int(count) if count.isdigit() else 10, 50)
+    length = get_input("Length each (default 16)")
+    length = int(length) if length.isdigit() else 16
+
+    print("\n   {}".format(c('Y', 'Generating {} passwords...'.format(count))))
+    chars = string.ascii_letters + string.digits + '!@#$%^&*()'
+    for i in range(count):
+        pw = ''.join(secrets.choice(chars) for _ in range(length))
+        print("   {} {}".format(c('DIM', '{:>3}.'.format(i + 1)), c('LIME', pw)))
+    pause()
+
+
+# ══════════════════════════════════════════════════════════════
+# FEATURE 5: ENCRYPTION / HASHING TOOLKIT
+# ══════════════════════════════════════════════════════════════
+
+def crypto_tools():
+    track_feature("crypto_tools")
+    while True:
+        print_menu_header("CRYPTO & HASHING TOOLKIT", "🔒")
+        print_option(1, "Hash Text (MD5/SHA1/SHA256/SHA512)")
+        print_option(2, "Hash File")
+        print_option(3, "Base64 Encode/Decode")
+        print_option(4, "ROT13 Cipher")
+        print_option(5, "Caesar Cipher")
+        print_option(6, "XOR Encrypt/Decrypt")
+        print_option(7, "URL Encode/Decode")
+        print_option(8, "Hex Encode/Decode")
+        print_option(9, "HMAC Generator")
+        print_option(0, "Back")
+
+        choice = get_input("CRYPTO")
+        if choice == '1':
+            hash_text()
+        elif choice == '2':
+            hash_file()
+        elif choice == '3':
+            base64_tool()
+        elif choice == '4':
+            rot13()
+        elif choice == '5':
+            caesar_cipher()
+        elif choice == '6':
+            xor_tool()
+        elif choice == '7':
+            url_encode_decode()
+        elif choice == '8':
+            hex_tool()
+        elif choice == '9':
+            hmac_gen()
+        elif choice == '0':
+            break
+
+
+def hash_text():
+    text = get_input("Text to hash")
+    if not text:
+        return
+    data = text.encode()
+    algos = {
+        'MD5': hashlib.md5(data).hexdigest(),
+        'SHA1': hashlib.sha1(data).hexdigest(),
+        'SHA256': hashlib.sha256(data).hexdigest(),
+        'SHA512': hashlib.sha512(data).hexdigest(),
+        'SHA3-256': hashlib.sha3_256(data).hexdigest(),
+        'BLAKE2b': hashlib.blake2b(data).hexdigest(),
+    }
+    print()
+    for algo, h in algos.items():
+        print("   {} {} {}".format(c('C', algo.rjust(10)), c('DIM', '|'), c('W', h)))
+    pause()
+
+
+def hash_file():
+    path = get_input("File path")
+    if not path or not os.path.exists(path):
+        print(c('R', "   File not found"))
+        pause()
+        return
+
+    print("\n   {}".format(c('Y', 'Hashing file...')))
+    algos = {'MD5': hashlib.md5(), 'SHA1': hashlib.sha1(), 'SHA256': hashlib.sha256()}
+    with open(path, 'rb') as f:
+        while True:
+            chunk = f.read(8192)
+            if not chunk:
+                break
+            for h in algos.values():
+                h.update(chunk)
+    for name, h in algos.items():
+        print("   {} {} {}".format(c('C', name.rjust(10)), c('DIM', '|'), c('W', h.hexdigest())))
+    pause()
+
+
+def base64_tool():
+    print("   {}".format(c('Y', '1) Encode  2) Decode')))
+    ch = get_input("Choice")
+    text = get_input("Text")
+    if not text:
+        return
+    if ch == '1':
+        result = base64.b64encode(text.encode()).decode()
+        print("\n   {} {}".format(c('G', 'Encoded:'), c('W', result)))
+    elif ch == '2':
+        try:
+            result = base64.b64decode(text).decode()
+            print("\n   {} {}".format(c('G', 'Decoded:'), c('W', result)))
+        except Exception:
+            print(c('R', "   Invalid base64"))
+    pause()
+
+
+def rot13():
+    text = get_input("Text")
+    if text:
+        result = text.translate(str.maketrans(
+            'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz',
+            'NOPQRSTUVWXYZABCDEFGHIJKLMnopqrstuvwxyzabcdefghijklm'))
+        print("\n   {} {}".format(c('G', 'Result:'), c('W', result)))
+    pause()
+
+
+def caesar_cipher():
+    text = get_input("Text")
+    shift = get_input("Shift (default 3)")
+    shift = int(shift) if shift.lstrip('-').isdigit() else 3
+    if not text:
+        return
+
+    result = []
+    for ch in text:
+        if ch.isalpha():
+            base_val = ord('A') if ch.isupper() else ord('a')
+            result.append(chr((ord(ch) - base_val + shift) % 26 + base_val))
+        else:
+            result.append(ch)
+    print("\n   {} {}".format(c('G', 'Result:'), c('W', ''.join(result))))
+    pause()
+
+
+def xor_tool():
+    text = get_input("Text")
+    key = get_input("Key")
+    if not text or not key:
+        return
+    result = ''.join(chr(ord(t) ^ ord(key[i % len(key)])) for i, t in enumerate(text))
+    hex_result = result.encode('utf-8', errors='replace').hex()
+    print("\n   {} {}".format(c('G', 'XOR (hex):'), c('W', hex_result)))
+    pause()
+
+
+def url_encode_decode():
+    print("   {}".format(c('Y', '1) Encode  2) Decode')))
+    ch = get_input("Choice")
+    text = get_input("Text")
+    if not text:
+        return
+    if ch == '1':
+        print("\n   {} {}".format(c('G', 'Encoded:'), c('W', urllib.parse.quote(text))))
+    else:
+        print("\n   {} {}".format(c('G', 'Decoded:'), c('W', urllib.parse.unquote(text))))
+    pause()
+
+
+def hex_tool():
+    print("   {}".format(c('Y', '1) Text>Hex  2) Hex>Text')))
+    ch = get_input("Choice")
+    text = get_input("Input")
+    if not text:
+        return
+    if ch == '1':
+        print("\n   {} {}".format(c('G', 'Hex:'), c('W', text.encode().hex())))
+    else:
+        try:
+            print("\n   {} {}".format(c('G', 'Text:'), c('W', bytes.fromhex(text).decode())))
+        except Exception:
+            print(c('R', "   Invalid hex"))
+    pause()
+
+
+def hmac_gen():
+    message = get_input("Message")
+    key = get_input("Secret Key")
+    if not message or not key:
+        return
+    for algo in ['sha256', 'sha512', 'md5']:
+        h = hmac.new(key.encode(), message.encode(), algo).hexdigest()
+        print("   {} {} {}".format(c('C', 'HMAC-{}'.format(algo.upper()).rjust(12)), c('DIM', '|'), c('W', h)))
+    pause()
+
+
+# ══════════════════════════════════════════════════════════════
+# FEATURE 6: TEXT PROCESSING TOOLS
+# ══════════════════════════════════════════════════════════════
+
+def text_tools():
+    track_feature("text_tools")
+    while True:
+        print_menu_header("TEXT PROCESSING", "📝")
+        print_option(1, "Word/Char Counter")
+        print_option(2, "Find & Replace")
+        print_option(3, "Sort Lines")
+        print_option(4, "Remove Duplicates")
+        print_option(5, "Text Case Converter")
+        print_option(6, "Regex Tester")
+        print_option(7, "Lorem Ipsum Generator")
+        print_option(8, "Text Diff (Compare Files)")
+        print_option(9, "Reverse Text")
+        print_option(10, "ASCII Art Text")
+        print_option(0, "Back")
+
+        choice = get_input("TEXT")
+        if choice == '1':
+            word_counter()
+        elif choice == '2':
+            find_replace()
+        elif choice == '3':
+            sort_lines()
+        elif choice == '4':
+            remove_dupes()
+        elif choice == '5':
+            case_converter()
+        elif choice == '6':
+            regex_tester()
+        elif choice == '7':
+            lorem_ipsum()
+        elif choice == '8':
+            text_diff()
+        elif choice == '9':
+            reverse_text()
+        elif choice == '10':
+            ascii_art()
+        elif choice == '0':
+            break
+
+
+def word_counter():
+    print("   {}".format(c('Y', '1) Enter text  2) From file')))
+    ch = get_input("Choice")
+    if ch == '2':
+        path = get_input("File path")
+        try:
+            with open(path) as f:
+                text = f.read()
+        except Exception:
+            print(c('R', "   Cannot read file"))
+            pause()
+            return
+    else:
+        text = get_input("Enter text")
+
+    if not text:
+        return
+
+    words = text.split()
+    chars = len(text)
+    chars_no_space = len(text.replace(' ', ''))
+    lines = text.count('\n') + 1
+    sentences = len(re.split(r'[.!?]+', text)) - 1
+    word_freq = Counter(w.lower().strip('.,!?;:') for w in words)
+    avg_len = sum(len(w) for w in words) / max(len(words), 1)
+
+    stats = [
+        ("Words", str(len(words))),
+        ("Chars", str(chars)),
+        ("No spaces", str(chars_no_space)),
+        ("Lines", str(lines)),
+        ("Sentences", str(max(sentences, 1))),
+        ("Avg wrd len", "{:.1f}".format(avg_len)),
+    ]
+    print()
+    for label, val in stats:
+        print("   {} {} {}".format(c('C', label.rjust(11)), c('DIM', '|'), c('W', val)))
+
+    print("\n   {}".format(c('Y', 'Top 10 words:')))
+    for word, cnt in word_freq.most_common(10):
+        bar = '#' * min(cnt, 30)
+        print("   {} {} {} {}".format(c('W', word.rjust(15)), c('DIM', '|'), c('G', bar), c('C', str(cnt))))
+    pause()
+
+
+def find_replace():
+    path = get_input("File path")
+    if not path or not os.path.exists(path):
+        print(c('R', "   File not found"))
+        pause()
+        return
+    find = get_input("Find")
+    replace = get_input("Replace with")
+    try:
+        with open(path) as f:
+            content = f.read()
+        count = content.count(find)
+        new_content = content.replace(find, replace)
+        with open(path, 'w') as f:
+            f.write(new_content)
+        print(c('G', "   Replaced {} occurrences".format(count)))
+    except Exception as e:
+        print(c('R', "   Error: {}".format(e)))
+    pause()
+
+
+def sort_lines():
+    path = get_input("File path")
+    if not path or not os.path.exists(path):
+        print(c('R', "   File not found"))
+        pause()
+        return
+    reverse = get_input("Reverse? (y/n)").lower() == 'y'
+    try:
+        with open(path) as f:
+            lines = f.readlines()
+        lines.sort(reverse=reverse)
+        with open(path, 'w') as f:
+            f.writelines(lines)
+        print(c('G', "   Sorted {} lines".format(len(lines))))
+    except Exception as e:
+        print(c('R', "   Error: {}".format(e)))
+    pause()
+
+
+def remove_dupes():
+    path = get_input("File path")
+    if not path or not os.path.exists(path):
+        print(c('R', "   File not found"))
+        pause()
+        return
+    try:
+        with open(path) as f:
+            lines = f.readlines()
+        original = len(lines)
+        seen = set()
+        unique = []
+        for line in lines:
+            if line not in seen:
+                seen.add(line)
+                unique.append(line)
+        with open(path, 'w') as f:
+            f.writelines(unique)
+        print(c('G', "   Removed {} duplicates ({} lines remain)".format(original - len(unique), len(unique))))
+    except Exception as e:
+        print(c('R', "   Error: {}".format(e)))
+    pause()
+
+
+def case_converter():
+    text = get_input("Text")
+    if not text:
+        return
+    snake = re.sub(r'[\s-]+', '_', text.lower())
+    kebab = re.sub(r'[\s_]+', '-', text.lower())
+    camel = text.title().replace(' ', '').replace('_', '')
+    camel = camel[0].lower() + camel[1:] if camel else ''
+
+    cases = [
+        ("UPPER", text.upper()),
+        ("lower", text.lower()),
+        ("Title", text.title()),
+        ("Sentence", text.capitalize()),
+        ("Swap", text.swapcase()),
+        ("snake_c", snake),
+        ("kebab-c", kebab),
+        ("camelC", camel),
+    ]
+    print()
+    for label, val in cases:
+        print("   {} {} {}".format(c('C', label.rjust(10)), c('DIM', '|'), c('W', val)))
+    pause()
+
+
+def regex_tester():
+    text = get_input("Text to test against")
+    pattern = get_input("Regex pattern")
+    if not text or not pattern:
+        return
+    try:
+        matches = list(re.finditer(pattern, text))
+        if matches:
+            print("\n   {}".format(c('G', '{} match(es) found:'.format(len(matches)))))
+            for i, m in enumerate(matches):
+                print("   {} {} {}".format(
+                    c('C', 'Match {}:'.format(i + 1)),
+                    c('W', m.group()),
+                    c('DIM', '(pos {}-{})'.format(m.start(), m.end()))
+                ))
+                if m.groups():
+                    for j, g in enumerate(m.groups()):
+                        print("     {} {}".format(c('DIM', 'Group {}:'.format(j + 1)), c('W', str(g))))
+        else:
+            print(c('Y', "   No matches"))
+    except re.error as e:
+        print(c('R', "   Invalid regex: {}".format(e)))
+    pause()
+
+
+def lorem_ipsum():
+    paragraphs = get_input("Number of paragraphs (default 3)")
+    paragraphs = int(paragraphs) if paragraphs.isdigit() else 3
+
+    words = ("lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod "
+             "tempor incididunt ut labore et dolore magna aliqua ut enim ad minim veniam "
+             "quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo "
+             "consequat duis aute irure dolor in reprehenderit in voluptate velit esse "
+             "cillum dolore eu fugiat nulla pariatur excepteur sint occaecat cupidatat "
+             "non proident sunt in culpa qui officia deserunt mollit anim id est laborum").split()
+
+    print()
+    for p in range(paragraphs):
+        sentence_count = random.randint(4, 8)
+        para = []
+        for s in range(sentence_count):
+            length = random.randint(6, 15)
+            sentence_words = [random.choice(words) for _ in range(length)]
+            sentence_words[0] = sentence_words[0].capitalize()
+            para.append(' '.join(sentence_words) + '.')
+        wrapped = textwrap.fill(' '.join(para), width=70)
+        print("   {}\n".format(c('W', wrapped)))
+    pause()
+
+
+def text_diff():
+    file1 = get_input("File 1")
+    file2 = get_input("File 2")
+    if not file1 or not file2:
+        return
+    try:
+        with open(file1) as f:
+            lines1 = f.readlines()
+        with open(file2) as f:
+            lines2 = f.readlines()
+
+        max_lines = max(len(lines1), len(lines2))
+        diffs = 0
+        for i in range(max_lines):
+            l1 = lines1[i].rstrip() if i < len(lines1) else '<missing>'
+            l2 = lines2[i].rstrip() if i < len(lines2) else '<missing>'
+            if l1 != l2:
+                diffs += 1
+                print("   {} {}".format(c('R', '- L{}:'.format(i + 1)), c('W', l1)))
+                print("   {} {}".format(c('G', '+ L{}:'.format(i + 1)), c('W', l2)))
+        print("\n   {}".format(c('C', '{} differences found'.format(diffs))))
+    except Exception as e:
+        print(c('R', "   Error: {}".format(e)))
+    pause()
+
+
+def reverse_text():
+    text = get_input("Text")
+    if text:
+        print("\n   {} {} {}".format(c('C', 'Reversed'.rjust(11)), c('DIM', '|'), c('W', text[::-1])))
+        print("   {} {} {}".format(c('C', 'Rev Words'.rjust(11)), c('DIM', '|'), c('W', ' '.join(text.split()[::-1]))))
+        print("   {} {} {}".format(c('C', 'Rev Each'.rjust(11)), c('DIM', '|'), c('W', ' '.join(w[::-1] for w in text.split()))))
+    pause()
+
+
+def ascii_art():
+    text = get_input("Text (short)")
+    if not text:
+        return
+    text = text[:20]
+
+    block_map = {
+        'A': ['  #  ', ' # # ', '#####', '#   #', '#   #'],
+        'B': ['#### ', '#   #', '#### ', '#   #', '#### '],
+        'C': [' ####', '#    ', '#    ', '#    ', ' ####'],
+        'D': ['#### ', '#   #', '#   #', '#   #', '#### '],
+        'E': ['#####', '#    ', '#### ', '#    ', '#####'],
+        'F': ['#####', '#    ', '#### ', '#    ', '#    '],
+        'G': [' ####', '#    ', '#  ##', '#   #', ' ####'],
+        'H': ['#   #', '#   #', '#####', '#   #', '#   #'],
+        'I': ['#####', '  #  ', '  #  ', '  #  ', '#####'],
+        'J': ['#####', '   # ', '   # ', '#  # ', ' ##  '],
+        'K': ['#   #', '#  # ', '###  ', '#  # ', '#   #'],
+        'L': ['#    ', '#    ', '#    ', '#    ', '#####'],
+        'M': ['#   #', '## ##', '# # #', '#   #', '#   #'],
+        'N': ['#   #', '##  #', '# # #', '#  ##', '#   #'],
+        'O': [' ### ', '#   #', '#   #', '#   #', ' ### '],
+        'P': ['#### ', '#   #', '#### ', '#    ', '#    '],
+        'Q': [' ### ', '#   #', '# # #', '#  # ', ' ## #'],
+        'R': ['#### ', '#   #', '#### ', '#  # ', '#   #'],
+        'S': [' ####', '#    ', ' ### ', '    #', '#### '],
+        'T': ['#####', '  #  ', '  #  ', '  #  ', '  #  '],
+        'U': ['#   #', '#   #', '#   #', '#   #', ' ### '],
+        'V': ['#   #', '#   #', '#   #', ' # # ', '  #  '],
+        'W': ['#   #', '#   #', '# # #', '## ##', '#   #'],
+        'X': ['#   #', ' # # ', '  #  ', ' # # ', '#   #'],
+        'Y': ['#   #', ' # # ', '  #  ', '  #  ', '  #  '],
+        'Z': ['#####', '   # ', '  #  ', ' #   ', '#####'],
+        ' ': ['     ', '     ', '     ', '     ', '     '],
+    }
+
+    print()
+    for row in range(5):
+        line = ""
+        for ch in text.upper():
+            if ch in block_map:
+                line += block_map[ch][row] + ' '
+            else:
+                line += '      '
+        print("   {}".format(c('LIME', line)))
+    pause()
+
+
+# ══════════════════════════════════════════════════════════════
+# FEATURE 7: NOTES SYSTEM
+# ══════════════════════════════════════════════════════════════
+
+def notes_system():
+    track_feature("notes")
+    while True:
+        print_menu_header("NOTES MANAGER", "📒")
+        print_option(1, "Add Note")
+        print_option(2, "List Notes")
+        print_option(3, "Search Notes")
+        print_option(4, "Delete Note")
+        print_option(5, "Export Notes")
+        print_option(0, "Back")
+
+        choice = get_input("NOTES")
+        if choice == '1':
+            add_note()
+        elif choice == '2':
+            list_notes()
+        elif choice == '3':
+            search_notes()
+        elif choice == '4':
+            delete_note()
+        elif choice == '5':
+            export_notes()
+        elif choice == '0':
+            break
+
+
+def load_notes():
+    return load_json(COOKER_NOTES)
+
+
+def save_notes(notes):
+    save_json(COOKER_NOTES, notes)
+
+
+def add_note():
+    title = get_input("Title")
+    if not title:
+        return
+    tags = get_input("Tags (comma-separated, optional)")
+    print("   {}".format(c('Y', 'Enter note content (empty line to finish):')))
+    lines = []
+    while True:
+        line = input("   ")
+        if not line:
+            break
+        lines.append(line)
+    content = '\n'.join(lines)
+
+    note = {
+        'id': secrets.token_hex(4),
+        'title': title,
+        'content': content,
+        'tags': [t.strip() for t in tags.split(',') if t.strip()],
+        'created': datetime.datetime.now().isoformat(),
+        'modified': datetime.datetime.now().isoformat()
+    }
+
+    notes = load_notes()
+    notes.append(note)
+    save_notes(notes)
+    print(c('G', "   Note saved!"))
+    pause()
+
+
+def list_notes():
+    notes = load_notes()
+    if not notes:
+        print(c('Y', "   No notes yet"))
+    else:
+        for n in notes:
+            tags = ', '.join(n.get('tags', []))
+            created = n['created'][:10]
+            print("   {} {} {} {}".format(
+                c('C', n['id']),
+                c('W', n['title'][:40]),
+                c('DIM', created),
+                c('M', tags)
+            ))
+            preview = n['content'][:60].replace('\n', ' ')
+            print("         {}".format(c('DIM', preview)))
+    pause()
+
+
+def search_notes():
+    query = get_input("Search query")
+    if not query:
+        return
+    notes = load_notes()
+    results = [n for n in notes if query.lower() in n['title'].lower() or query.lower() in n['content'].lower()]
+    if results:
+        for n in results:
+            print("   {} {}".format(c('C', n['id']), c('W', n['title'])))
+            print("         {}".format(c('DIM', n['content'][:80])))
+    else:
+        print(c('Y', "   No matches"))
+    pause()
+
+
+def delete_note():
+    note_id = get_input("Note ID to delete")
+    notes = load_notes()
+    notes = [n for n in notes if n['id'] != note_id]
+    save_notes(notes)
+    print(c('G', "   Note deleted"))
+    pause()
+
+
+def export_notes():
+    notes = load_notes()
+    export_path = os.path.join(COOKER_DIR, "notes_export_{}.txt".format(int(time.time())))
+    with open(export_path, 'w') as f:
+        for n in notes:
+            f.write("=== {} ===\n".format(n['title']))
+            f.write("Date: {}\n".format(n['created']))
+            f.write("Tags: {}\n\n".format(', '.join(n.get('tags', []))))
+            f.write(n['content'] + '\n\n')
+    print(c('G', "   Exported to {}".format(export_path)))
+    pause()
+
+
+# ══════════════════════════════════════════════════════════════
+# FEATURE 8: TASK / TODO MANAGER
+# ══════════════════════════════════════════════════════════════
+
+def task_manager():
+    track_feature("tasks")
+    while True:
+        print_menu_header("TASK MANAGER", "✅")
+        print_option(1, "Add Task")
+        print_option(2, "List Tasks")
+        print_option(3, "Complete Task")
+        print_option(4, "Delete Task")
+        print_option(5, "Task Statistics")
+        print_option(0, "Back")
+
+        choice = get_input("TASKS")
+        if choice == '1':
+            add_task()
+        elif choice == '2':
+            list_tasks()
+        elif choice == '3':
+            complete_task()
+        elif choice == '4':
+            delete_task()
+        elif choice == '5':
+            task_stats()
+        elif choice == '0':
+            break
+
+
+def load_tasks():
+    return load_json(COOKER_TASKS)
+
+
+def save_tasks(tasks):
+    save_json(COOKER_TASKS, tasks)
+
+
+def add_task():
+    title = get_input("Task title")
+    if not title:
+        return
+    priority = get_input("Priority (1=High, 2=Med, 3=Low, default 2)")
+    priority = int(priority) if priority in '123' else 2
+    due = get_input("Due date (YYYY-MM-DD, optional)")
+
+    task = {
+        'id': secrets.token_hex(3),
+        'title': title,
+        'priority': priority,
+        'due': due if due else None,
+        'done': False,
+        'created': datetime.datetime.now().isoformat(),
+        'completed': None
+    }
+
+    tasks = load_tasks()
+    tasks.append(task)
+    save_tasks(tasks)
+    print(c('G', "   Task added!"))
+    pause()
+
+
+def list_tasks():
+    tasks = load_tasks()
+    if not tasks:
+        print(c('Y', "   No tasks"))
+        pause()
+        return
+
+    priority_icons = {1: '🔴', 2: '🟡', 3: '🟢'}
+    pending = [t for t in tasks if not t['done']]
+    completed = [t for t in tasks if t['done']]
+
+    if pending:
+        print("\n   {}".format(c('Y', '-- Pending --')))
+        for t in sorted(pending, key=lambda x: x['priority']):
+            icon = priority_icons.get(t['priority'], '⚪')
+            due = " (due: {})".format(t['due']) if t.get('due') else ""
+            print("   {} {} {} {}".format(icon, c('DIM', t['id']), c('W', t['title']), c('ORANGE', due)))
+
+    if completed:
+        print("\n   {}".format(c('G', '-- Completed --')))
+        for t in completed[-5:]:
+            print("   ✅ {} {}".format(c('DIM', t['id']), c('DIM', t['title'])))
+    pause()
+
+
+def complete_task():
+    task_id = get_input("Task ID")
+    tasks = load_tasks()
+    for t in tasks:
+        if t['id'] == task_id:
+            t['done'] = True
+            t['completed'] = datetime.datetime.now().isoformat()
+            save_tasks(tasks)
+            print(c('G', "   Completed: {}".format(t['title'])))
+            pause()
+            return
+    print(c('R', "   Task not found"))
+    pause()
+
+
+def delete_task():
+    task_id = get_input("Task ID")
+    tasks = load_tasks()
+    tasks = [t for t in tasks if t['id'] != task_id]
+    save_tasks(tasks)
+    print(c('G', "   Task deleted"))
+    pause()
+
+
+def task_stats():
+    tasks = load_tasks()
+    total = len(tasks)
+    done = sum(1 for t in tasks if t['done'])
+    pending = total - done
+    print("\n   {} {} {}".format(c('C', 'Total'.rjust(10)), c('DIM', '|'), c('W', str(total))))
+    print("   {} {} {}".format(c('G', 'Done'.rjust(10)), c('DIM', '|'), c('W', str(done))))
+    print("   {} {} {}".format(c('Y', 'Pending'.rjust(10)), c('DIM', '|'), c('W', str(pending))))
+    if total > 0:
+        pct = done / total * 100
+        bar = '#' * int(pct / 2) + '.' * (50 - int(pct / 2))
+        print("   {} {} {} {}".format(c('C', 'Completion'.rjust(10)), c('DIM', '|'), c('G', bar), c('W', '{:.0f}%'.format(pct))))
+    pause()
+
+
+# ══════════════════════════════════════════════════════════════
+# FEATURE 9: PACKAGE MANAGER HELPER
+# ══════════════════════════════════════════════════════════════
+
+def package_manager():
+    track_feature("package_manager")
+    while True:
+        print_menu_header("PACKAGE MANAGER", "📦")
+        print_option(1, "List Installed Packages")
+        print_option(2, "Search Package")
+        print_option(3, "Install Package")
+        print_option(4, "Remove Package")
+        print_option(5, "Update All Packages")
+        print_option(6, "Package Info")
+        print_option(7, "Install Common Tools Bundle")
+        print_option(0, "Back")
+
+        choice = get_input("PKG")
+        if choice == '1':
+            out, _, _ = run_cmd("pkg list-installed 2>/dev/null || dpkg -l 2>/dev/null")
+            print("\n{}".format(out))
+            pause()
+        elif choice == '2':
+            name = get_input("Package name")
+            if name:
+                out, _, _ = run_cmd("pkg search {} 2>/dev/null || apt search {} 2>/dev/null".format(name, name))
+                print("\n{}".format(out))
+            pause()
+        elif choice == '3':
+            name = get_input("Package to install")
+            if name:
+                os.system("pkg install -y {}".format(name))
+            pause()
+        elif choice == '4':
+            name = get_input("Package to remove")
+            if name:
+                os.system("pkg uninstall {}".format(name))
+            pause()
+        elif choice == '5':
+            os.system("pkg update -y && pkg upgrade -y")
+            pause()
+        elif choice == '6':
+            name = get_input("Package name")
+            if name:
+                out, _, _ = run_cmd("pkg show {} 2>/dev/null || apt show {} 2>/dev/null".format(name, name))
+                print("\n{}".format(out))
+            pause()
+        elif choice == '7':
+            install_bundle()
+        elif choice == '0':
+            break
+
+
+def install_bundle():
+    bundles = {
+        '1': ('Development', ['git', 'python', 'nodejs', 'clang', 'make', 'cmake', 'rust']),
+        '2': ('Networking', ['nmap', 'curl', 'wget', 'openssh', 'netcat-openbsd', 'traceroute']),
+        '3': ('Utilities', ['vim', 'nano', 'htop', 'tree', 'zip', 'unzip', 'tar', 'jq']),
+        '4': ('Media', ['ffmpeg', 'imagemagick', 'sox']),
+    }
+    print("\n   {}".format(c('Y', 'Available Bundles:')))
+    for k, (name, pkgs) in bundles.items():
+        print("   {} {} {}".format(c('C', '[{}]'.format(k)), c('W', name), c('DIM', '({} packages)'.format(len(pkgs)))))
+
+    ch = get_input("Bundle #")
+    if ch in bundles:
+        name, pkgs = bundles[ch]
+        print(c('Y', "   Installing {} bundle...".format(name)))
+        os.system("pkg install -y {}".format(' '.join(pkgs)))
+    pause()
+
+
+# ══════════════════════════════════════════════════════════════
+# FEATURE 10: PROCESS MANAGER
+# ══════════════════════════════════════════════════════════════
+
+def process_manager():
+    track_feature("process_manager")
+    while True:
+        print_menu_header("PROCESS MANAGER", "⚙")
+        print_option(1, "List Processes")
+        print_option(2, "Kill Process by PID")
+        print_option(3, "Kill Process by Name")
+        print_option(4, "Top CPU Processes")
+        print_option(5, "Top Memory Processes")
+        print_option(6, "Process Tree")
+        print_option(0, "Back")
+
+        choice = get_input("PROC")
+        if choice == '1':
+            out, _, _ = run_cmd("ps aux 2>/dev/null || ps -ef")
+            print("\n{}".format(out))
+            pause()
+        elif choice == '2':
+            pid = get_input("PID to kill")
+            if pid:
+                out, err, _ = run_cmd("kill {}".format(pid))
+                msg = out if out else (err if err else "Signal sent")
+                print(c('G' if not err else 'R', msg))
+            pause()
+        elif choice == '3':
+            name = get_input("Process name")
+            if name:
+                run_cmd("pkill {} 2>&1".format(name))
+                print(c('G', "   Killed processes matching '{}'".format(name)))
+            pause()
+        elif choice == '4':
+            out, _, _ = run_cmd("ps aux --sort=-%cpu 2>/dev/null | head -15 || ps -eo pid,comm,%cpu --sort=-%cpu | head -15")
+            print("\n{}".format(out))
+            pause()
+        elif choice == '5':
+            out, _, _ = run_cmd("ps aux --sort=-%mem 2>/dev/null | head -15 || ps -eo pid,comm,%mem --sort=-%mem | head -15")
+            print("\n{}".format(out))
+            pause()
+        elif choice == '6':
+            out, _, _ = run_cmd("pstree 2>/dev/null || ps -ef")
+            print("\n{}".format(out))
+            pause()
+        elif choice == '0':
+            break
+
+
+# ══════════════════════════════════════════════════════════════
+# FEATURE 11: ARCHIVE MANAGER
+# ══════════════════════════════════════════════════════════════
+
+def archive_manager():
+    track_feature("archive_manager")
+    while True:
+        print_menu_header("ARCHIVE MANAGER", "📦")
+        print_option(1, "Create ZIP Archive")
+        print_option(2, "Extract ZIP Archive")
+        print_option(3, "Create TAR.GZ Archive")
+        print_option(4, "Extract TAR.GZ Archive")
+        print_option(5, "List Archive Contents")
+        print_option(0, "Back")
+
+        choice = get_input("ARCH")
+        if choice == '1':
+            source = get_input("Source file/dir")
+            output = get_input("Output ZIP name")
+            if source and output:
+                try:
+                    with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as zf:
+                        if os.path.isdir(source):
+                            for root, dirs, files in os.walk(source):
+                                for f in files:
+                                    filepath = os.path.join(root, f)
+                                    zf.write(filepath, os.path.relpath(filepath, source))
+                        else:
+                            zf.write(source)
+                    size = format_size(os.path.getsize(output))
+                    print(c('G', "   Created {} ({})".format(output, size)))
+                except Exception as e:
+                    print(c('R', "   Error: {}".format(e)))
+            pause()
+        elif choice == '2':
+            archive = get_input("ZIP file")
+            dest = get_input("Extract to (default: current dir)")
+            dest = dest if dest else '.'
+            try:
+                with zipfile.ZipFile(archive, 'r') as zf:
+                    zf.extractall(dest)
+                print(c('G', "   Extracted to {}".format(dest)))
+            except Exception as e:
+                print(c('R', "   Error: {}".format(e)))
+            pause()
+        elif choice == '3':
+            source = get_input("Source file/dir")
+            output = get_input("Output name (without .tar.gz)")
+            if source and output:
+                try:
+                    with tarfile.open("{}.tar.gz".format(output), "w:gz") as tf:
+                        tf.add(source)
+                    print(c('G', "   Created {}.tar.gz".format(output)))
+                except Exception as e:
+                    print(c('R', "   Error: {}".format(e)))
+            pause()
+        elif choice == '4':
+            archive = get_input("TAR.GZ file")
+            dest = get_input("Extract to (default: current dir)")
+            dest = dest if dest else '.'
+            try:
+                with tarfile.open(archive, 'r:gz') as tf:
+                    tf.extractall(dest)
+                print(c('G', "   Extracted to {}".format(dest)))
+            except Exception as e:
+                print(c('R', "   Error: {}".format(e)))
+            pause()
+        elif choice == '5':
+            archive = get_input("Archive file")
+            if not archive:
+                continue
+            try:
+                if archive.endswith('.zip'):
+                    with zipfile.ZipFile(archive) as zf:
+                        for info in zf.infolist():
+                            print("   {} {}".format(c('W', info.filename), c('DIM', format_size(info.file_size))))
+                elif '.tar' in archive:
+                    with tarfile.open(archive) as tf:
+                        for member in tf.getmembers():
+                            print("   {} {}".format(c('W', member.name), c('DIM', format_size(member.size))))
+            except Exception as e:
+                print(c('R', "   Error: {}".format(e)))
+            pause()
+        elif choice == '0':
+            break
+
+
+# ══════════════════════════════════════════════════════════════
+# FEATURE 12: CODE SNIPPETS MANAGER
+# ══════════════════════════════════════════════════════════════
+
+def snippets_manager():
+    track_feature("snippets")
+    while True:
+        print_menu_header("CODE SNIPPETS", "💾")
+        print_option(1, "Add Snippet")
+        print_option(2, "List Snippets")
+        print_option(3, "Search Snippets")
+        print_option(4, "Run Snippet")
+        print_option(5, "Delete Snippet")
+        print_option(0, "Back")
+
+        choice = get_input("SNIP")
+        if choice == '1':
+            name = get_input("Snippet name")
+            lang = get_input("Language (python/bash/etc)")
+            print("   {}".format(c('Y', 'Enter code (empty line to finish):')))
+            lines = []
+            while True:
+                line = input("   ")
+                if not line:
+                    break
+                lines.append(line)
+
+            snippets = load_json(COOKER_SNIPPETS)
+            snippets.append({
+                'id': secrets.token_hex(3),
+                'name': name,
+                'lang': lang,
+                'code': '\n'.join(lines),
+                'created': datetime.datetime.now().isoformat()
+            })
+            save_json(COOKER_SNIPPETS, snippets)
+            print(c('G', "   Snippet saved!"))
+            pause()
+        elif choice == '2':
+            snippets = load_json(COOKER_SNIPPETS)
+            for s in snippets:
+                lang_tag = s.get('lang', '?')
+                print("   {} {} {}".format(c('C', s['id']), c('Y', '[{}]'.format(lang_tag)), c('W', s['name'])))
+                for line in s['code'].split('\n')[:3]:
+                    print("      {}".format(c('DIM', line)))
+            pause()
+        elif choice == '3':
+            query = get_input("Search")
+            snippets = load_json(COOKER_SNIPPETS)
+            for s in snippets:
+                if query.lower() in s['name'].lower() or query.lower() in s['code'].lower():
+                    print("   {} {}".format(c('C', s['id']), c('W', s['name'])))
+                    print("      {}".format(c('DIM', s['code'][:100])))
+            pause()
+        elif choice == '4':
+            sid = get_input("Snippet ID")
+            snippets = load_json(COOKER_SNIPPETS)
+            for s in snippets:
+                if s['id'] == sid:
+                    snippet_lang = s.get('lang', '')
+                    if snippet_lang == 'python':
+                        exec(s['code'])
+                    elif snippet_lang == 'bash':
+                        os.system(s['code'])
+                    else:
+                        print(c('Y', "   Only python/bash supported for execution"))
+                    break
+            pause()
+        elif choice == '5':
+            sid = get_input("Snippet ID")
+            snippets = load_json(COOKER_SNIPPETS)
+            snippets = [s for s in snippets if s['id'] != sid]
+            save_json(COOKER_SNIPPETS, snippets)
+            print(c('G', "   Deleted"))
+            pause()
+        elif choice == '0':
+            break
+
+
+# ══════════════════════════════════════════════════════════════
+# FEATURE 13: MATH & CONVERSION TOOLS
+# ══════════════════════════════════════════════════════════════
+
+def math_tools():
+    track_feature("math_tools")
+    while True:
+        print_menu_header("MATH & CONVERSIONS", "🔢")
+        print_option(1, "Calculator (eval)")
+        print_option(2, "Number Base Converter")
+        print_option(3, "Unit Converter")
+        print_option(4, "Temperature Converter")
+        print_option(5, "Percentage Calculator")
+        print_option(6, "Prime Number Checker")
+        print_option(7, "Fibonacci Generator")
+        print_option(8, "Statistics Calculator")
+        print_option(0, "Back")
+
+        choice = get_input("MATH")
+        if choice == '1':
+            expr = get_input("Expression")
+            if expr:
+                try:
+                    allowed = {k: v for k, v in math.__dict__.items() if not k.startswith('_')}
+                    allowed.update({'abs': abs, 'round': round, 'min': min, 'max': max, 'sum': sum})
+                    result = eval(expr, {"__builtins__": {}}, allowed)
+                    print("\n   {} {}".format(c('G', '='), c('BOLD', c('W', str(result)))))
+                except Exception as e:
+                    print(c('R', "   Error: {}".format(e)))
+            pause()
+        elif choice == '2':
+            base_converter()
+        elif choice == '3':
+            unit_converter()
+        elif choice == '4':
+            temp_converter()
+        elif choice == '5':
+            pct_calc()
+        elif choice == '6':
+            prime_check()
+        elif choice == '7':
+            fibonacci()
+        elif choice == '8':
+            stats_calc()
+        elif choice == '0':
+            break
+
+
+def base_converter():
+    num = get_input("Number")
+    from_base = get_input("From base (2/8/10/16)")
+    try:
+        decimal = int(num, int(from_base))
+        print("\n   {} {} {}".format(c('C', 'Binary'.rjust(8)), c('DIM', '|'), c('W', bin(decimal))))
+        print("   {} {} {}".format(c('C', 'Octal'.rjust(8)), c('DIM', '|'), c('W', oct(decimal))))
+        print("   {} {} {}".format(c('C', 'Decimal'.rjust(8)), c('DIM', '|'), c('W', str(decimal))))
+        print("   {} {} {}".format(c('C', 'Hex'.rjust(8)), c('DIM', '|'), c('W', hex(decimal))))
+    except Exception:
+        print(c('R', "   Invalid input"))
+    pause()
+
+
+def unit_converter():
+    conversions = [
+        ('km to mi', lambda x: x * 0.621371, 'km', 'mi'),
+        ('mi to km', lambda x: x * 1.60934, 'mi', 'km'),
+        ('kg to lb', lambda x: x * 2.20462, 'kg', 'lb'),
+        ('lb to kg', lambda x: x * 0.453592, 'lb', 'kg'),
+        ('m to ft', lambda x: x * 3.28084, 'm', 'ft'),
+        ('ft to m', lambda x: x * 0.3048, 'ft', 'm'),
+        ('L to gal', lambda x: x * 0.264172, 'L', 'gal'),
+        ('gal to L', lambda x: x * 3.78541, 'gal', 'L'),
+        ('cm to in', lambda x: x * 0.393701, 'cm', 'in'),
+        ('in to cm', lambda x: x * 2.54, 'in', 'cm'),
+        ('GB to MB', lambda x: x * 1024, 'GB', 'MB'),
+        ('MB to GB', lambda x: x / 1024, 'MB', 'GB'),
+    ]
+    print("\n   {}".format(c('Y', 'Available conversions:')))
+    for i, (name, _, _, _) in enumerate(conversions, 1):
+        print("   {} {}".format(c('C', '[{:>2}]'.format(i)), c('W', name)))
+
+    ch = get_input("Choice #")
+    if ch.isdigit() and 1 <= int(ch) <= len(conversions):
+        name, func, from_unit, to_unit = conversions[int(ch) - 1]
+        val = get_input("Value in {}".format(from_unit))
+        try:
+            result = func(float(val))
+            print("\n   {}".format(c('G', '{} {} = {:.4f} {}'.format(val, from_unit, result, to_unit))))
+        except Exception:
+            print(c('R', "   Invalid input"))
+    pause()
+
+
+def temp_converter():
+    temp = get_input("Temperature value")
+    unit = get_input("From (C/F/K)").upper()
+    try:
+        t = float(temp)
+        if unit == 'C':
+            print("   {}".format(c('W', '{:.2f}C = {:.2f}F = {:.2f}K'.format(t, t * 9 / 5 + 32, t + 273.15))))
+        elif unit == 'F':
+            cel = (t - 32) * 5 / 9
+            print("   {}".format(c('W', '{:.2f}F = {:.2f}C = {:.2f}K'.format(t, cel, cel + 273.15))))
+        elif unit == 'K':
+            cel = t - 273.15
+            print("   {}".format(c('W', '{:.2f}K = {:.2f}C = {:.2f}F'.format(t, cel, cel * 9 / 5 + 32))))
+    except Exception:
+        print(c('R', "   Invalid"))
+    pause()
+
+
+def pct_calc():
+    print("   {}".format(c('Y', '1) X% of Y  2) X is what % of Y  3) % change')))
+    ch = get_input("Choice")
+    try:
+        if ch == '1':
+            x = float(get_input("Percentage"))
+            y = float(get_input("Of value"))
+            print("   {}".format(c('G', '{}% of {} = {:.4f}'.format(x, y, x / 100 * y))))
+        elif ch == '2':
+            x = float(get_input("Value"))
+            y = float(get_input("Total"))
+            print("   {}".format(c('G', '{} is {:.4f}% of {}'.format(x, x / y * 100, y))))
+        elif ch == '3':
+            old = float(get_input("Old value"))
+            new = float(get_input("New value"))
+            change = (new - old) / old * 100
+            direction = "increase" if change > 0 else "decrease"
+            print("   {}".format(c('G', '{:.4f}% {}'.format(abs(change), direction))))
+    except Exception:
+        print(c('R', "   Invalid"))
+    pause()
+
+
+def prime_check():
+    num = get_input("Number")
+    try:
+        n = int(num)
+        if n < 2:
+            print(c('R', "   {} is not prime".format(n)))
+        elif n < 4:
+            print(c('G', "   {} is PRIME".format(n)))
+        else:
+            is_prime = all(n % i != 0 for i in range(2, int(math.sqrt(n)) + 1))
+            if is_prime:
+                print(c('G', "   {} is PRIME".format(n)))
+            else:
+                factors = [i for i in range(2, n) if n % i == 0]
+                print("   {}".format(c('R', '{} is NOT prime'.format(n))))
+                print("   {}".format(c('DIM', 'Factors: {}'.format(factors[:20]))))
+    except Exception:
+        print(c('R', "   Invalid"))
+    pause()
+
+
+def fibonacci():
+    count = get_input("How many terms (max 100)")
+    count = min(int(count) if count.isdigit() else 20, 100)
+    a, b = 0, 1
+    fibs = []
+    for _ in range(count):
+        fibs.append(a)
+        a, b = b, a + b
+    for i, f in enumerate(fibs):
+        print("   {} = {}".format(c('DIM', 'F({})'.format(i)), c('LIME', str(f))))
+    pause()
+
+
+def stats_calc():
+    data = get_input("Numbers (comma-separated)")
+    try:
+        nums = [float(x.strip()) for x in data.split(',')]
+        n = len(nums)
+        mean = sum(nums) / n
+        sorted_nums = sorted(nums)
+        if n % 2:
+            median = sorted_nums[n // 2]
+        else:
+            median = (sorted_nums[n // 2 - 1] + sorted_nums[n // 2]) / 2
+        variance = sum((x - mean) ** 2 for x in nums) / n
+        std_dev = math.sqrt(variance)
+        mode_counter = Counter(nums)
+        mode = mode_counter.most_common(1)[0][0]
+
+        stats = [
+            ("Count", str(n)),
+            ("Sum", "{:.4f}".format(sum(nums))),
+            ("Mean", "{:.4f}".format(mean)),
+            ("Median", "{:.4f}".format(median)),
+            ("Mode", "{:.4f}".format(mode)),
+            ("Variance", "{:.4f}".format(variance)),
+            ("Std Dev.", "{:.4f}".format(std_dev)),
+            ("Min", "{:.4f}".format(min(nums))),
+            ("Max", "{:.4f}".format(max(nums))),
+            ("Range", "{:.4f}".format(max(nums) - min(nums))),
+        ]
+        print()
+        for label, val in stats:
+            print("   {} {} {}".format(c('C', label.rjust(10)), c('DIM', '|'), c('W', val)))
+    except Exception:
+        print(c('R', "   Invalid input"))
+    pause()
+
+
+# ══════════════════════════════════════════════════════════════
+# FEATURE 14: BOOKMARK MANAGER
+# ══════════════════════════════════════════════════════════════
+
+def bookmark_manager():
+    track_feature("bookmarks")
+    while True:
+        print_menu_header("BOOKMARK MANAGER", "🔖")
+        print_option(1, "Add Bookmark")
+        print_option(2, "List Bookmarks")
+        print_option(3, "Search Bookmarks")
+        print_option(4, "Delete Bookmark")
+        print_option(5, "Open Bookmark")
+        print_option(0, "Back")
+
+        choice = get_input("BKMK")
+        if choice == '1':
+            url = get_input("URL")
+            title = get_input("Title")
+            tags = get_input("Tags (comma-separated)")
+            if url:
+                bm = load_json(COOKER_BOOKMARKS)
+                bm.append({
+                    'id': secrets.token_hex(3),
+                    'url': url,
+                    'title': title or url,
+                    'tags': [t.strip() for t in tags.split(',') if t.strip()],
+                    'created': datetime.datetime.now().isoformat()
+                })
+                save_json(COOKER_BOOKMARKS, bm)
+                print(c('G', "   Bookmark saved!"))
+            pause()
+        elif choice == '2':
+            bm = load_json(COOKER_BOOKMARKS)
+            for b in bm:
+                tags = ' '.join('#' + t for t in b.get('tags', []))
+                print("   {} {} {} {}".format(
+                    c('C', b['id']),
+                    c('W', b['title'][:40]),
+                    c('DIM', b['url'][:40]),
+                    c('M', tags)
+                ))
+            pause()
+        elif choice == '3':
+            q = get_input("Search")
+            bm = load_json(COOKER_BOOKMARKS)
+            for b in bm:
+                if q.lower() in b['title'].lower() or q.lower() in b['url'].lower() or q.lower() in str(b.get('tags', [])):
+                    print("   {} {} {}".format(c('C', b['id']), c('W', b['title']), c('DIM', b['url'])))
+            pause()
+        elif choice == '4':
+            bid = get_input("Bookmark ID")
+            bm = load_json(COOKER_BOOKMARKS)
+            bm = [b for b in bm if b['id'] != bid]
+            save_json(COOKER_BOOKMARKS, bm)
+            print(c('G', "   Deleted"))
+            pause()
+        elif choice == '5':
+            bid = get_input("Bookmark ID")
+            bm = load_json(COOKER_BOOKMARKS)
+            for b in bm:
+                if b['id'] == bid:
+                    os.system("termux-open-url '{}' 2>/dev/null || xdg-open '{}' 2>/dev/null".format(b['url'], b['url']))
+                    print(c('G', "   Opening {}".format(b['url'])))
+                    break
+            pause()
+        elif choice == '0':
+            break
+
+
+# ══════════════════════════════════════════════════════════════
+# FEATURE 15: QUICK SYSTEM COMMANDS
+# ══════════════════════════════════════════════════════════════
+
+def quick_commands():
+    track_feature("quick_commands")
+    while True:
+        print_menu_header("QUICK COMMANDS", "⚡")
+        print_option(1, "Battery Status")
+        print_option(2, "Set Brightness")
+        print_option(3, "Vibrate Phone")
+        print_option(4, "Get Location (GPS)")
+        print_option(5, "Camera Photo")
+        print_option(6, "Text-to-Speech")
+        print_option(7, "Clipboard Get/Set")
+        print_option(8, "Show Notification")
+        print_option(9, "Send SMS")
+        print_option(10, "Flashlight Toggle")
+        print_option(0, "Back")
+
+        choice = get_input("QUICK")
+        if choice == '1':
+            out, _, _ = run_cmd("termux-battery-status 2>/dev/null")
+            if out:
+                try:
+                    data = json.loads(out)
+                    pct = data.get('percentage', '?')
+                    status = data.get('status', '?')
+                    temp = data.get('temperature', '?')
+                    if isinstance(pct, (int, float)):
+                        bar = '#' * (int(pct) // 2) + '.' * (50 - int(pct) // 2)
+                        col = 'G' if pct > 50 else ('Y' if pct > 20 else 'R')
+                    else:
+                        bar = ''
+                        col = 'W'
+                    print("\n   {} {} {}".format(c('C', 'Battery:'), c(col, '{}%'.format(pct)), c(col, bar)))
+                    print("   {} {}".format(c('C', 'Status:'), c('W', status)))
+                    print("   {} {}".format(c('C', 'Temp:'), c('W', '{}C'.format(temp))))
+                except Exception:
+                    print("   {}".format(c('W', out)))
+            else:
+                print(c('Y', "   termux-api not available. Install with: pkg install termux-api"))
+            pause()
+        elif choice == '2':
+            level = get_input("Brightness (0-255)")
+            run_cmd("termux-brightness {}".format(level))
+            pause()
+        elif choice == '3':
+            ms = get_input("Duration (ms, default 500)")
+            ms = ms if ms.isdigit() else "500"
+            run_cmd("termux-vibrate -d {}".format(ms))
+            print(c('G', "   Vibrated!"))
+            pause()
+        elif choice == '4':
+            print(c('Y', "   Getting location..."))
+            out, _, _ = run_cmd("termux-location -p network 2>/dev/null")
+            if out:
+                try:
+                    data = json.loads(out)
+                    print("   {} {}".format(c('C', 'Latitude:'), c('W', str(data.get('latitude', 'N/A')))))
+                    print("   {} {}".format(c('C', 'Longitude:'), c('W', str(data.get('longitude', 'N/A')))))
+                    print("   {} {}m".format(c('C', 'Accuracy:'), c('W', str(data.get('accuracy', 'N/A')))))
+                except Exception:
+                    print("   {}".format(c('W', out)))
+            else:
+                print(c('Y', "   termux-api required"))
+            pause()
+        elif choice == '5':
+            cam = get_input("Camera (0=back, 1=front)")
+            cam = cam if cam in '01' else '0'
+            out_file = os.path.expanduser("~/cooker_photo_{}.jpg".format(int(time.time())))
+            run_cmd("termux-camera-photo -c {} {}".format(cam, out_file))
+            print(c('G', "   Photo saved: {}".format(out_file)))
+            pause()
+        elif choice == '6':
+            text = get_input("Text to speak")
+            if text:
+                run_cmd("termux-tts-speak '{}'".format(text))
+            pause()
+        elif choice == '7':
+            print("   {}".format(c('Y', '1) Get clipboard  2) Set clipboard')))
+            ch = get_input("Choice")
+            if ch == '1':
+                out, _, _ = run_cmd("termux-clipboard-get")
+                print("   {}".format(c('W', out if out else '(empty)')))
+            elif ch == '2':
+                text = get_input("Text to copy")
+                run_cmd("termux-clipboard-set '{}'".format(text))
+                print(c('G', "   Copied!"))
+            pause()
+        elif choice == '8':
+            title = get_input("Title")
+            content = get_input("Content")
+            run_cmd("termux-notification --title '{}' --content '{}'".format(title, content))
+            print(c('G', "   Notification sent!"))
+            pause()
+        elif choice == '9':
+            number = get_input("Phone number")
+            message = get_input("Message")
+            if number and message:
+                run_cmd("termux-sms-send -n {} '{}'".format(number, message))
+                print(c('G', "   SMS sent!"))
+            pause()
+        elif choice == '10':
+            run_cmd("termux-torch on")
+            print(c('Y', "   Flashlight ON. Press Enter to turn off."))
+            input()
+            run_cmd("termux-torch off")
+            print(c('G', "   Flashlight OFF"))
+            pause()
+        elif choice == '0':
+            break
+
+
+# ══════════════════════════════════════════════════════════════
+# FEATURE 16: GIT HELPER
+# ══════════════════════════════════════════════════════════════
+
+def git_helper():
+    track_feature("git_helper")
+    while True:
+        print_menu_header("GIT HELPER", "🌿")
+        print_option(1, "Git Status")
+        print_option(2, "Git Log (pretty)")
+        print_option(3, "Quick Commit")
+        print_option(4, "Git Diff")
+        print_option(5, "Branch Manager")
+        print_option(6, "Clone Repository")
+        print_option(7, "Git Stats")
+        print_option(0, "Back")
+
+        choice = get_input("GIT")
+        if choice == '1':
+            out, _, _ = run_cmd("git status")
+            print("\n{}".format(out))
+            pause()
+        elif choice == '2':
+            out, _, _ = run_cmd("git log --oneline --graph --decorate -20")
+            print("\n{}".format(out))
+            pause()
+        elif choice == '3':
+            msg = get_input("Commit message")
+            if msg:
+                os.system("git add -A && git commit -m '{}'".format(msg))
+            pause()
+        elif choice == '4':
+            out, _, _ = run_cmd("git diff --stat")
+            print("\n{}".format(out))
+            pause()
+        elif choice == '5':
+            out, _, _ = run_cmd("git branch -a")
+            print("\n{}".format(out))
+            new_branch = get_input("Switch to branch (or Enter to skip)")
+            if new_branch:
+                os.system("git checkout {}".format(new_branch))
+            pause()
+        elif choice == '6':
+            url = get_input("Repository URL")
+            if url:
+                os.system("git clone {}".format(url))
+            pause()
+        elif choice == '7':
+            out, _, _ = run_cmd("git shortlog -sn --all")
+            print("\n   {}".format(c('Y', 'Contributor Stats:')))
+            print("{}".format(out))
+            out2, _, _ = run_cmd("git rev-list --count HEAD")
+            print("\n   {} {}".format(c('C', 'Total Commits:'), c('W', out2)))
+            pause()
+        elif choice == '0':
+            break
+
+
+# ══════════════════════════════════════════════════════════════
+# FEATURE 17: SYSTEM MONITOR (Live)
+# ══════════════════════════════════════════════════════════════
+
+def system_monitor():
+    track_feature("system_monitor")
+    print_menu_header("LIVE SYSTEM MONITOR", "📈")
+    print(c('Y', "   Monitoring... Press Ctrl+C to stop\n"))
+
+    try:
+        while True:
+            clear()
+            print(c('BOLD', c('C', "   === COOKER SYSTEM MONITOR ===\n")))
+
+            out, _, _ = run_cmd("uptime")
+            print("   {} {}".format(c('Y', 'Uptime:'), c('W', out)))
+
+            out, _, _ = run_cmd("free -h 2>/dev/null")
+            if out:
+                for line in out.strip().split('\n'):
+                    print("   {}".format(c('W', line)))
+
+            out, _, _ = run_cmd("cat /proc/loadavg 2>/dev/null")
+            if out:
+                parts = out.split()
+                print("\n   {} {}".format(c('Y', 'CPU Load:'), c('W', '1m={} 5m={} 15m={}'.format(parts[0], parts[1], parts[2]))))
+
+            out, _, _ = run_cmd("ps aux --sort=-%cpu 2>/dev/null | head -8 || ps -eo pid,comm,%cpu --sort=-%cpu 2>/dev/null | head -8")
+            if out:
+                print("\n   {}".format(c('Y', 'Top Processes:')))
+                for line in out.strip().split('\n'):
+                    print("   {}".format(c('W', line)))
+
+            out, _, _ = run_cmd("df -h $HOME | tail -1")
+            if out:
+                print("\n   {} {}".format(c('Y', 'Disk:'), c('W', out)))
+
+            out, _, _ = run_cmd("cat /proc/net/dev 2>/dev/null | tail -5")
+            if out:
+                print("\n   {}".format(c('Y', 'Network I/O:')))
+                for line in out.strip().split('\n'):
+                    print("   {}".format(c('DIM', line[:80])))
+
+            print("\n   {}".format(c('DIM', 'Refreshing in 3s... Ctrl+C to stop')))
+            time.sleep(3)
+    except KeyboardInterrupt:
+        print(c('G', "\n   Monitor stopped."))
+        pause()
+
+
+# ══════════════════════════════════════════════════════════════
+# FEATURE 18: RANDOM GENERATORS
+# ══════════════════════════════════════════════════════════════
+
+def random_generators():
+    track_feature("random_generators")
+    while True:
+        print_menu_header("RANDOM GENERATORS", "🎲")
+        print_option(1, "Random Number")
+        print_option(2, "Random String")
+        print_option(3, "UUID Generator")
+        print_option(4, "Dice Roller")
+        print_option(5, "Coin Flip")
+        print_option(6, "Random Color")
+        print_option(7, "Random Choice from List")
+        print_option(8, "MAC Address Generator")
+        print_option(0, "Back")
+
+        choice = get_input("RAND")
+        if choice == '1':
+            low = int(get_input("Min (default 1)") or "1")
+            high = int(get_input("Max (default 100)") or "100")
+            count = int(get_input("Count (default 1)") or "1")
+            for _ in range(min(count, 100)):
+                print("   {}".format(c('LIME', str(random.randint(low, high)))))
+            pause()
+        elif choice == '2':
+            length = int(get_input("Length (default 32)") or "32")
+            charset = get_input("Charset (a=alpha, n=num, x=hex, default=alphanum)")
+            if charset == 'a':
+                chars = string.ascii_letters
+            elif charset == 'n':
+                chars = string.digits
+            elif charset == 'x':
+                chars = string.hexdigits.lower()
+            else:
+                chars = string.ascii_letters + string.digits
+            result = ''.join(secrets.choice(chars) for _ in range(length))
+            print("\n   {}".format(c('LIME', result)))
+            pause()
+        elif choice == '3':
+            count = int(get_input("Count (default 5)") or "5")
+            for _ in range(min(count, 50)):
+                print("   {}".format(c('LIME', str(uuid.uuid4()))))
+            pause()
+        elif choice == '4':
+            dice = get_input("Dice notation (e.g., 2d6, 1d20)")
+            try:
+                match = re.match(r'(\d+)d(\d+)', dice)
+                if match:
+                    n, sides = int(match.group(1)), int(match.group(2))
+                    rolls = [random.randint(1, sides) for _ in range(n)]
+                    print("   {} {} = {}".format(
+                        c('Y', 'Rolling {}d{}:'.format(n, sides)),
+                        c('LIME', str(rolls)),
+                        c('BOLD', c('W', str(sum(rolls))))
+                    ))
+                else:
+                    print(c('R', "   Invalid notation"))
+            except Exception:
+                print(c('R', "   Error"))
+            pause()
+        elif choice == '5':
+            count = int(get_input("Flips (default 1)") or "1")
+            results = [random.choice(['Heads', 'Tails']) for _ in range(min(count, 1000))]
+            if count == 1:
+                icon = '(H)' if results[0] == 'Heads' else '(T)'
+                print("\n   {} {}".format(c('LIME', results[0]), icon))
+            else:
+                h = results.count('Heads')
+                t = results.count('Tails')
+                print("   {}".format(c('C', 'Heads: {} ({:.1f}%)'.format(h, h / count * 100))))
+                print("   {}".format(c('Y', 'Tails: {} ({:.1f}%)'.format(t, t / count * 100))))
+            pause()
+        elif choice == '6':
+            count = int(get_input("Count (default 5)") or "5")
+            for _ in range(min(count, 50)):
+                r_val = random.randint(0, 255)
+                g_val = random.randint(0, 255)
+                b_val = random.randint(0, 255)
+                hex_color = "#{:02x}{:02x}{:02x}".format(r_val, g_val, b_val)
+                rgb_str = "rgb({},{},{})".format(r_val, g_val, b_val)
+                ansi = "\033[38;2;{};{};{}m######\033[0m".format(r_val, g_val, b_val)
+                print("   {} {} {}".format(ansi, c('W', hex_color), c('DIM', rgb_str)))
+            pause()
+        elif choice == '7':
+            items = get_input("Items (comma-separated)")
+            if items:
+                choices = [i.strip() for i in items.split(',')]
+                winner = random.choice(choices)
+                print("\n   >> {}".format(c('BOLD', c('LIME', winner))))
+            pause()
+        elif choice == '8':
+            for _ in range(5):
+                mac = ':'.join('{:02x}'.format(random.randint(0, 255)) for _ in range(6))
+                print("   {}".format(c('LIME', mac)))
+            pause()
+        elif choice == '0':
+            break
+
+
+# ══════════════════════════════════════════════════════════════
+# FEATURE 19: CRON / SCHEDULER
+# ══════════════════════════════════════════════════════════════
+
+def scheduler():
+    track_feature("scheduler")
+    while True:
+        print_menu_header("SCHEDULER / TIMER", "⏰")
+        print_option(1, "Countdown Timer")
+        print_option(2, "Stopwatch")
+        print_option(3, "Pomodoro Timer")
+        print_option(4, "Alarm (after X minutes)")
+        print_option(5, "List Cron Jobs")
+        print_option(0, "Back")
+
+        choice = get_input("TIME")
+        if choice == '1':
+            seconds = int(get_input("Seconds") or "0")
+            print(c('Y', "   Timer started... Ctrl+C to cancel"))
+            try:
+                for remaining in range(seconds, 0, -1):
+                    mins, secs = divmod(remaining, 60)
+                    hrs, mins = divmod(mins, 60)
+                    sys.stdout.write("\r   {}".format(c('BOLD', c('LIME', '  {:02d}:{:02d}:{:02d}  '.format(hrs, mins, secs)))))
+                    sys.stdout.flush()
+                    time.sleep(1)
+                print("\n   {}".format(c('G', 'TIME IS UP!')))
+                run_cmd("termux-vibrate -d 1000 2>/dev/null")
+                run_cmd("termux-notification --title 'COOKER Timer' --content 'Time is up!' 2>/dev/null")
+            except KeyboardInterrupt:
+                print(c('Y', "\n   Timer cancelled"))
+            pause()
+        elif choice == '2':
+            print(c('Y', "   Stopwatch started... Press Ctrl+C to stop"))
+            start = time.time()
+            try:
+                while True:
+                    elapsed = time.time() - start
+                    mins, secs = divmod(elapsed, 60)
+                    sys.stdout.write("\r   {}".format(c('BOLD', c('LIME', '  {:02d}:{:06.3f}  '.format(int(mins), secs)))))
+                    sys.stdout.flush()
+                    time.sleep(0.05)
+            except KeyboardInterrupt:
+                elapsed = time.time() - start
+                print("\n   {}".format(c('G', 'Elapsed: {:.3f} seconds'.format(elapsed))))
+            pause()
+        elif choice == '3':
+            work = int(get_input("Work minutes (default 25)") or "25")
+            rest = int(get_input("Break minutes (default 5)") or "5")
+            rounds = int(get_input("Rounds (default 4)") or "4")
+            try:
+                for r in range(1, rounds + 1):
+                    print(c('R', "\n   Round {}/{} - WORK ({}min)".format(r, rounds, work)))
+                    for s in range(work * 60, 0, -1):
+                        m, sec = divmod(s, 60)
+                        sys.stdout.write("\r   {} ".format(c('LIME', '{:02d}:{:02d}'.format(m, sec))))
+                        sys.stdout.flush()
+                        time.sleep(1)
+                    run_cmd("termux-vibrate -d 500 2>/dev/null")
+                    print(c('G', "\n   BREAK ({}min)".format(rest)))
+                    for s in range(rest * 60, 0, -1):
+                        m, sec = divmod(s, 60)
+                        sys.stdout.write("\r   {} ".format(c('C', '{:02d}:{:02d}'.format(m, sec))))
+                        sys.stdout.flush()
+                        time.sleep(1)
+                    run_cmd("termux-vibrate -d 500 2>/dev/null")
+                print(c('G', "\n   Pomodoro complete!"))
+            except KeyboardInterrupt:
+                print(c('Y', "\n   Pomodoro cancelled"))
+            pause()
+        elif choice == '4':
+            mins = int(get_input("Minutes") or "1")
+            print(c('Y', "   Alarm set for {} minutes".format(mins)))
+            time.sleep(mins * 60)
+            print(c('R', "   ALARM!"))
+            for _ in range(5):
+                run_cmd("termux-vibrate -d 300 2>/dev/null")
+                time.sleep(0.5)
+            pause()
+        elif choice == '5':
+            out, _, _ = run_cmd("crontab -l 2>/dev/null")
+            print("\n{}".format(out if out else '   No cron jobs'))
+            pause()
+        elif choice == '0':
+            break
+
+
+# ══════════════════════════════════════════════════════════════
+# FEATURE 20: ANALYTICS DASHBOARD
+# ══════════════════════════════════════════════════════════════
+
+def analytics():
+    track_feature("analytics")
+    print_menu_header("COOKER ANALYTICS", "📊")
+
+    conn = sqlite3.connect(COOKER_DB)
+    cur = conn.cursor()
+    cur.execute("SELECT feature, uses, last_used FROM analytics ORDER BY uses DESC")
+    rows = cur.fetchall()
+    conn.close()
+
+    if not rows:
+        print(c('Y', "   No usage data yet. Use some features first!"))
+    else:
+        max_uses = max(r[1] for r in rows)
+        total_uses = sum(r[1] for r in rows)
+        print("\n   {}\n".format(c('Y', 'Total feature uses: {}'.format(total_uses))))
+        for feature, uses, last_used in rows:
+            bar_len = int(uses / max(max_uses, 1) * 40)
+            bar = '#' * bar_len + '.' * (40 - bar_len)
+            last = last_used[:10] if last_used else 'N/A'
+            print("   {} {} {} {} {}".format(
+                c('W', feature.rjust(20)),
+                c('DIM', '|'),
+                c('G', bar),
+                c('C', str(uses)),
+                c('DIM', last)
+            ))
+
+    notes_count = len(load_json(COOKER_NOTES))
+    tasks_count = len(load_json(COOKER_TASKS))
+    snippets_count = len(load_json(COOKER_SNIPPETS))
+    bookmarks_count = len(load_json(COOKER_BOOKMARKS))
+
+    log_size = format_size(os.path.getsize(COOKER_LOG)) if os.path.exists(COOKER_LOG) else '0B'
+    db_size = format_size(os.path.getsize(COOKER_DB)) if os.path.exists(COOKER_DB) else '0B'
+
+    print("\n   {}".format(c('Y', '-- Data Stats --')))
+    data_stats = [
+        ("Notes", str(notes_count)),
+        ("Tasks", str(tasks_count)),
+        ("Snippets", str(snippets_count)),
+        ("Bookmarks", str(bookmarks_count)),
+        ("Log Size", log_size),
+        ("DB Size", db_size),
+    ]
+    for label, val in data_stats:
+        print("   {} {} {}".format(c('C', label.rjust(10)), c('DIM', '|'), c('W', val)))
+    pause()
+
+
+# ══════════════════════════════════════════════════════════════
+# FEATURE 21: SHELL / COMMAND RUNNER
+# ══════════════════════════════════════════════════════════════
+
+def shell_runner():
+    track_feature("shell")
+    print_menu_header("INTERACTIVE SHELL", "💻")
+    print(c('DIM', "   Type commands. 'exit' to return.\n"))
+
+    while True:
+        cmd = get_input("sh$")
+        if cmd.lower() in ('exit', 'quit', 'q'):
+            break
+        if not cmd:
+            continue
+
+        conn = sqlite3.connect(COOKER_DB)
+        cur = conn.cursor()
+        cur.execute("INSERT INTO command_history (command, timestamp, category) VALUES (?,?,?)",
+                    (cmd, datetime.datetime.now().isoformat(), 'shell'))
+        conn.commit()
+        conn.close()
+
+        start = time.time()
+        out, err, code = run_cmd(cmd)
+        elapsed = time.time() - start
+
+        if out:
+            print("   {}".format(c('W', out)))
+        if err:
+            print("   {}".format(c('R', err)))
+        print("   {}".format(c('DIM', '[exit:{} time:{:.2f}s]'.format(code, elapsed))))
+
+
+# ══════════════════════════════════════════════════════════════
+# FEATURE 22: CONTACTS MANAGER
+# ══════════════════════════════════════════════════════════════
+
+def contacts_manager():
+    track_feature("contacts")
+    while True:
+        print_menu_header("CONTACTS", "👥")
+        print_option(1, "Add Contact")
+        print_option(2, "List Contacts")
+        print_option(3, "Search Contact")
+        print_option(4, "Delete Contact")
+        print_option(0, "Back")
+
+        choice = get_input("CONT")
+        if choice == '1':
+            name = get_input("Name")
+            phone = get_input("Phone")
+            email = get_input("Email")
+            notes = get_input("Notes")
+            contacts = load_json(COOKER_CONTACTS)
+            contacts.append({
+                'id': secrets.token_hex(3),
+                'name': name,
+                'phone': phone,
+                'email': email,
+                'notes': notes,
+                'created': datetime.datetime.now().isoformat()
+            })
+            save_json(COOKER_CONTACTS, contacts)
+            print(c('G', "   Contact saved!"))
+            pause()
+        elif choice == '2':
+            contacts = load_json(COOKER_CONTACTS)
+            for ct in sorted(contacts, key=lambda x: x.get('name', '')):
+                print("   {} {} {} {}".format(
+                    c('C', ct['id']),
+                    c('W', ct['name']),
+                    c('DIM', ct.get('phone', '')),
+                    c('DIM', ct.get('email', ''))
+                ))
+            pause()
+        elif choice == '3':
+            q = get_input("Search")
+            contacts = load_json(COOKER_CONTACTS)
+            for ct in contacts:
+                if q.lower() in str(ct).lower():
+                    print("   {} {} {}".format(c('C', ct['id']), c('W', ct['name']), c('DIM', ct.get('phone', ''))))
+            pause()
+        elif choice == '4':
+            cid = get_input("Contact ID")
+            contacts = load_json(COOKER_CONTACTS)
+            contacts = [ct for ct in contacts if ct['id'] != cid]
+            save_json(COOKER_CONTACTS, contacts)
+            print(c('G', "   Deleted"))
+            pause()
+        elif choice == '0':
+            break
+
+
+# ══════════════════════════════════════════════════════════════
+# FEATURE 23: CLEANUP & MAINTENANCE
+# ══════════════════════════════════════════════════════════════
+
+def maintenance():
+    track_feature("maintenance")
+    while True:
+        print_menu_header("MAINTENANCE", "🧹")
+        print_option(1, "Clear Termux Cache")
+        print_option(2, "Clear COOKER Logs")
+        print_option(3, "Find Large Files")
+        print_option(4, "Find Old Files")
+        print_option(5, "Empty Trash / Temp")
+        print_option(6, "COOKER Data Backup")
+        print_option(7, "COOKER Data Restore")
+        print_option(8, "Factory Reset COOKER")
+        print_option(0, "Back")
+
+        choice = get_input("MAINT")
+        if choice == '1':
+            run_cmd("apt clean 2>/dev/null; apt autoclean 2>/dev/null")
+            print(c('G', "   Cache cleared"))
+            pause()
+        elif choice == '2':
+            if os.path.exists(COOKER_LOG):
+                size = format_size(os.path.getsize(COOKER_LOG))
+                open(COOKER_LOG, 'w').close()
+                print(c('G', "   Log cleared ({} freed)".format(size)))
+            pause()
+        elif choice == '3':
+            min_size = get_input("Min size in MB (default 10)")
+            min_size = int(min_size) if min_size.isdigit() else 10
+            min_bytes = min_size * 1024 * 1024
+            print("\n   {}".format(c('Y', 'Files > {}MB...'.format(min_size))))
+            count = 0
+            for root, dirs, files in os.walk(os.path.expanduser('~')):
+                for f in files:
+                    full = os.path.join(root, f)
+                    try:
+                        size = os.path.getsize(full)
+                        if size > min_bytes:
+                            print("   {} {}".format(c('W', format_size(size).rjust(10)), c('DIM', full)))
+                            count += 1
+                    except Exception:
+                        pass
+                if count > 50:
+                    break
+            pause()
+        elif choice == '4':
+            days = int(get_input("Older than X days (default 30)") or "30")
+            cutoff = time.time() - days * 86400
+            count = 0
+            for root, dirs, files in os.walk(os.path.expanduser('~')):
+                for f in files:
+                    full = os.path.join(root, f)
+                    try:
+                        if os.path.getmtime(full) < cutoff:
+                            age = int((time.time() - os.path.getmtime(full)) / 86400)
+                            print("   {} {}".format(c('DIM', '{}d ago'.format(age)), c('W', full)))
+                            count += 1
+                    except Exception:
+                        pass
+                if count > 50:
+                    break
+            print("\n   {}".format(c('C', 'Found {}+ files'.format(count))))
+            pause()
+        elif choice == '5':
+            dirs_to_clean = ['/tmp', os.path.expanduser('~/.cache')]
+            for d in dirs_to_clean:
+                if os.path.exists(d):
+                    out, _, _ = run_cmd("du -sh {}".format(d))
+                    print("   {}".format(c('W', out)))
+            if get_input("Clean temp files? (yes/no)").lower() == 'yes':
+                run_cmd("rm -rf /tmp/* 2>/dev/null")
+                print(c('G', "   Temp cleaned"))
+            pause()
+        elif choice == '6':
+            backup_path = os.path.expanduser("~/cooker_backup_{}.tar.gz".format(int(time.time())))
+            try:
+                with tarfile.open(backup_path, 'w:gz') as tf:
+                    tf.add(COOKER_DIR, arcname='cooker_data')
+                size = format_size(os.path.getsize(backup_path))
+                print(c('G', "   Backup saved: {} ({})".format(backup_path, size)))
+            except Exception as e:
+                print(c('R', "   Error: {}".format(e)))
+            pause()
+        elif choice == '7':
+            path = get_input("Backup file path")
+            if path and os.path.exists(path):
+                try:
+                    with tarfile.open(path, 'r:gz') as tf:
+                        tf.extractall(os.path.expanduser('~'))
+                    print(c('G', "   Restore complete!"))
+                except Exception as e:
+                    print(c('R', "   Error: {}".format(e)))
+            pause()
+        elif choice == '8':
+            confirm = get_input("This will DELETE all COOKER data. Type 'RESET' to confirm")
+            if confirm == 'RESET':
+                shutil.rmtree(COOKER_DIR, ignore_errors=True)
+                init_cooker()
+                print(c('G', "   COOKER has been reset"))
+            pause()
+        elif choice == '0':
+            break
+
+
+# ══════════════════════════════════════════════════════════════
+# FEATURE 24: QUICK LOOKUP / CHEATSHEETS
+# ══════════════════════════════════════════════════════════════
+
+def cheatsheets():
+    track_feature("cheatsheets")
+    while True:
+        print_menu_header("CHEATSHEETS", "📚")
+        print_option(1, "Linux Commands")
+        print_option(2, "Git Commands")
+        print_option(3, "Python Cheatsheet")
+        print_option(4, "Vim Cheatsheet")
+        print_option(5, "Regex Cheatsheet")
+        print_option(6, "HTTP Status Codes")
+        print_option(7, "Bash Shortcuts")
+        print_option(0, "Back")
+
+        choice = get_input("CHEAT")
+        sheets = {
+            '1': {
+                'ls -la': 'List all files detailed',
+                'chmod 755': 'Set permissions rwxr-xr-x',
+                'find / -name "*.py"': 'Find python files',
+                'grep -r "text" .': 'Search text recursively',
+                'tar czf a.tar.gz dir/': 'Create tar.gz',
+                'du -sh *': 'Disk usage of items',
+                'ps aux | grep proc': 'Find process',
+                'kill -9 PID': 'Force kill process',
+                'df -h': 'Disk free space',
+                'cat /proc/cpuinfo': 'CPU information',
+                'wget URL': 'Download file',
+                'curl -O URL': 'Download with curl',
+                'sed -i "s/old/new/g" f': 'Find replace in file',
+                "awk '{print $1}' f": 'Print first column',
+                'xargs': 'Build command from stdin',
+            },
+            '2': {
+                'git init': 'Initialize repo',
+                'git clone URL': 'Clone repo',
+                'git add -A': 'Stage all changes',
+                'git commit -m "msg"': 'Commit with message',
+                'git push origin main': 'Push to remote',
+                'git pull': 'Pull from remote',
+                'git branch name': 'Create branch',
+                'git checkout -b name': 'Create & switch branch',
+                'git merge branch': 'Merge branch',
+                'git stash': 'Stash changes',
+                'git log --oneline': 'Compact log',
+                'git diff': 'Show changes',
+                'git reset HEAD~1': 'Undo last commit',
+                'git remote -v': 'Show remotes',
+            },
+            '3': {
+                'list comprehension': '[x**2 for x in range(10)]',
+                'dict comprehension': '{k:v for k,v in items}',
+                'lambda': 'f = lambda x: x**2',
+                'map/filter': 'list(map(fn, lst))',
+                'enumerate': 'for i,v in enumerate(lst)',
+                'zip': 'list(zip(a, b))',
+                'f-string': 'f"Hello {name}"',
+                'try/except': 'try: ... except E as e: ...',
+                'with open': 'with open("f") as f: ...',
+                'args/kwargs': 'def fn(*args, **kwargs)',
+                'decorator': '@decorator def fn(): ...',
+                'generator': 'def gen(): yield value',
+            },
+            '4': {
+                'i': 'Insert mode',
+                'Esc': 'Normal mode',
+                ':w': 'Save',
+                ':q': 'Quit',
+                ':wq': 'Save & quit',
+                'dd': 'Delete line',
+                'yy': 'Copy line',
+                'p': 'Paste',
+                '/text': 'Search',
+                'n': 'Next match',
+                'u': 'Undo',
+                'Ctrl+r': 'Redo',
+                'gg': 'Go to top',
+                'G': 'Go to bottom',
+                ':s/old/new/g': 'Replace in line',
+                ':%s/old/new/g': 'Replace in file',
+            },
+            '5': {
+                '.': 'Any character',
+                '\\d': 'Digit [0-9]',
+                '\\w': 'Word char [a-zA-Z0-9_]',
+                '\\s': 'Whitespace',
+                '*': '0 or more',
+                '+': '1 or more',
+                '?': '0 or 1',
+                '^': 'Start of line',
+                '$': 'End of line',
+                '[abc]': 'Character class',
+                '[^abc]': 'Negated class',
+                '(group)': 'Capture group',
+                '|': 'OR',
+                '{n,m}': 'n to m times',
+                '(?:...)': 'Non-capture group',
+            },
+            '6': {
+                '200': 'OK',
+                '201': 'Created',
+                '204': 'No Content',
+                '301': 'Moved Permanently',
+                '302': 'Found (Redirect)',
+                '304': 'Not Modified',
+                '400': 'Bad Request',
+                '401': 'Unauthorized',
+                '403': 'Forbidden',
+                '404': 'Not Found',
+                '405': 'Method Not Allowed',
+                '429': 'Too Many Requests',
+                '500': 'Internal Server Error',
+                '502': 'Bad Gateway',
+                '503': 'Service Unavailable',
+            },
+            '7': {
+                'Ctrl+A': 'Go to line start',
+                'Ctrl+E': 'Go to line end',
+                'Ctrl+U': 'Clear line before cursor',
+                'Ctrl+K': 'Clear line after',
+                'Ctrl+W': 'Delete word before',
+                'Ctrl+R': 'Search history',
+                'Ctrl+L': 'Clear screen',
+                'Ctrl+C': 'Cancel command',
+                'Ctrl+Z': 'Suspend process',
+                '!!': 'Repeat last command',
+                'Alt+.': 'Last argument of prev cmd',
+            },
+        }
+
+        if choice in sheets:
+            for cmd, desc in sheets[choice].items():
+                print("   {} {} {}".format(c('LIME', cmd.ljust(30)), c('DIM', '|'), c('W', desc)))
+            pause()
+        elif choice == '0':
+            break
+
+
+# ══════════════════════════════════════════════════════════════
+# MAIN MENU
+# ══════════════════════════════════════════════════════════════
+
+def main_menu():
+    while True:
+        banner()
+
+        categories = [
+            ("INFORMATION & MONITORING", [
+                (1, "System Information", "📊", system_info),
+                (2, "System Monitor (Live)", "📈", system_monitor),
+                (3, "Process Manager", "⚙", process_manager),
+            ]),
+            ("NETWORKING", [
+                (4, "Network Toolkit", "🌐", network_tools),
+            ]),
+            ("FILE & DATA", [
+                (5, "File Manager", "📁", file_manager),
+                (6, "Archive Manager", "📦", archive_manager),
+                (7, "Text Processing", "📝", text_tools),
+            ]),
+            ("SECURITY & CRYPTO", [
+                (8, "Password Vault", "🔐", password_tools),
+                (9, "Crypto & Hashing", "🔒", crypto_tools),
+            ]),
+            ("PRODUCTIVITY", [
+                (10, "Notes Manager", "📒", notes_system),
+                (11, "Task Manager", "✅", task_manager),
+                (12, "Code Snippets", "💾", snippets_manager),
+                (13, "Bookmark Manager", "🔖", bookmark_manager),
+                (14, "Contacts", "👥", contacts_manager),
+            ]),
+            ("TOOLS & UTILITIES", [
+                (15, "Math & Conversions", "🔢", math_tools),
+                (16, "Random Generators", "🎲", random_generators),
+                (17, "Scheduler & Timers", "⏰", scheduler),
+                (18, "Package Manager", "📦", package_manager),
+                (19, "Git Helper", "🌿", git_helper),
+                (20, "Quick Commands (Termux API)", "⚡", quick_commands),
+            ]),
+            ("META", [
+                (21, "Interactive Shell", "💻", shell_runner),
+                (22, "Cheatsheets", "📚", cheatsheets),
+                (23, "Analytics Dashboard", "📊", analytics),
+                (24, "Maintenance & Cleanup", "🧹", maintenance),
+            ]),
+        ]
+
+        for cat_name, items in categories:
+            print("   {}".format(c('BOLD', c('Y', '--- {} ---'.format(cat_name)))))
+            for num, name, emoji, _ in items:
+                print_option(num, name, emoji)
+            print()
+
+        print_option(0, "Exit COOKER", "🚪")
+
+        choice = get_input("COOKER")
+
+        func_map = {}
+        for _, items in categories:
+            for num, _, _, func in items:
+                func_map[str(num)] = func
+
+        if choice == '0':
+            print(c('BOLD', c('ORANGE', "\n   🔥 Thanks for cooking! Stay fired up! 🔥\n")))
+            log_action("COOKER session ended")
+            sys.exit(0)
+        elif choice in func_map:
+            try:
+                func_map[choice]()
+            except KeyboardInterrupt:
+                print(c('Y', "\n   Interrupted."))
+            except Exception as e:
+                print(c('R', "\n   Error: {}".format(e)))
+                pause()
+        elif choice:
+            print(c('R', "   Invalid option"))
+            time.sleep(0.5)
+
+
+# ══════════════════════════════════════════════════════════════
+# ENTRY POINT
+# ══════════════════════════════════════════════════════════════
+
+if __name__ == '__main__':
+    try:
+        init_cooker()
+        log_action("COOKER session started")
+        main_menu()
+    except KeyboardInterrupt:
+        print(c('BOLD', c('ORANGE', "\n\n   🔥 COOKER out. Peace! \n")))
+        sys.exit(0)
