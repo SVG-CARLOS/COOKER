@@ -39,7 +39,7 @@ cd COOKER
 # Run it
 python3 cooker.py
 
-
+'''bash
 
    ██████╗ ██████╗  ██████╗ ██╗  ██╗███████╗██████╗
   ██╔════╝██╔═══██╗██╔═══██╗██║ ██╔╝██╔════╝██╔══██╗
@@ -70,6 +70,9 @@ python3 cooker.py
    [ 9] 🔒 Crypto & Hashing
 
    ...and much more
+
+'''bash
+
 🔧 Requirements
 Python 3.6+ (pre-installed on Termux)
 Termux (Android) or any Linux terminal
@@ -81,3 +84,6 @@ Bash
 pkg install termux-api
 
 # Install the Termux:API app from F-Droid too
+
+'''bash
+
