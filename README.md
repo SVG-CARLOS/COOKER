@@ -38,3 +38,46 @@ cd COOKER
 
 # Run it
 python3 cooker.py
+
+
+
+   ██████╗ ██████╗  ██████╗ ██╗  ██╗███████╗██████╗
+  ██╔════╝██╔═══██╗██╔═══██╗██║ ██╔╝██╔════╝██╔══██╗
+  ██║     ██║   ██║██║   ██║█████╔╝ █████╗  ██████╔╝
+  ██║     ██║   ██║██║   ██║██╔═██╗ ██╔══╝  ██╔══██╗
+  ╚██████╗╚██████╔╝╚██████╔╝██║  ██╗███████╗██║  ██║
+   ╚═════╝ ╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝
+
+  ====================================================
+   🔥 v2.0.0 | 40+ Features | Termux Multi-Tool 🔥
+  ====================================================
+
+   --- INFORMATION & MONITORING ---
+   [ 1] 📊 System Information
+   [ 2] 📈 System Monitor (Live)
+   [ 3] ⚙  Process Manager
+
+   --- NETWORKING ---
+   [ 4] 🌐 Network Toolkit
+
+   --- FILE & DATA ---
+   [ 5] 📁 File Manager
+   [ 6] 📦 Archive Manager
+   [ 7] 📝 Text Processing
+
+   --- SECURITY & CRYPTO ---
+   [ 8] 🔐 Password Vault
+   [ 9] 🔒 Crypto & Hashing
+
+   ...and much more
+🔧 Requirements
+Python 3.6+ (pre-installed on Termux)
+Termux (Android) or any Linux terminal
+Zero external dependencies — uses only Python standard library
+Optional (for extra features)
+Bash
+
+# For Termux API features (battery, GPS, camera, SMS, etc.)
+pkg install termux-api
+
+# Install the Termux:API app from F-Droid too
