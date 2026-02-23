@@ -1,5 +1,3 @@
-# COOKER
-
 
 
 🔥 The Ultimate Termux Multi-Tool Suite — 40+ features packed into one Python script. Network scanner, file manager, password vault, crypto toolkit, notes, task manager, system monitor, and more. No dependencies required.
@@ -22,8 +20,8 @@
   No external dependencies. No BS. Just pure functionality.</b>
 </p>
 
-<img src="https://img.shields.io/github/stars/YOUR_USERNAME/COOKER?style=social" alt="Stars">
-<img src="https://img.shields.io/github/forks/YOUR_USERNAME/COOKER?style=social" alt="Forks">
+<img src="https://img.shields.io/github/stars/SVG-CARLOS/COOKER?style=social" alt="Stars">
+<img src="https://img.shields.io/github/forks/SVG-CARLOS/COOKER?style=social" alt="Forks">
 
 </div>
 
