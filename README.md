@@ -31,7 +31,7 @@
 
 ```bash
 # Clone it
-git clone https://github.com/YOUR_USERNAME/COOKER.git
+git clone https://github.com/SVG-CARLOS/COOKER.git
 
 # Enter directory
 cd COOKER
